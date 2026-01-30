@@ -554,7 +554,7 @@ func TestDocumentationFetcherDiscoverPages(t *testing.T) {
 		if r.URL.Path == "/sitemap-pages.xml" {
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`<?xml version="1.0" encoding="utf-8"?>
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 	<url>
 		<loc>` + testServer.URL + `/</loc>
@@ -628,7 +628,7 @@ func TestDocumentationFetcherDiscoverPagesInvalidXML(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/xml")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`<invalid xml`))
+		_, _ = w.Write([]byte(`<invalid xml`))
 	}))
 	defer server.Close()
 
@@ -655,7 +655,7 @@ func TestDocumentationFetcherFetchAllPages(t *testing.T) {
 		if r.URL.Path == "/sitemap-pages.xml" {
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`<?xml version="1.0" encoding="utf-8"?>
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 	<url><loc>` + testServer.URL + `/page1</loc></url>
 	<url><loc>` + testServer.URL + `/page2</loc></url>
@@ -663,7 +663,7 @@ func TestDocumentationFetcherFetchAllPages(t *testing.T) {
 </urlset>`))
 		} else {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("<html><body>Page content for " + r.URL.Path + "</body></html>"))
+			_, _ = w.Write([]byte("<html><body>Page content for " + r.URL.Path + "</body></html>"))
 		}
 	}))
 	defer testServer.Close()
@@ -709,7 +709,7 @@ func TestDocumentationFetcherFetchAllPagesWithErrors(t *testing.T) {
 		case "/sitemap-pages.xml":
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`<?xml version="1.0" encoding="utf-8"?>
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 	<url><loc>` + testServer.URL + `/page1</loc></url>
 	<url><loc>` + testServer.URL + `/page2</loc></url>
@@ -721,7 +721,7 @@ func TestDocumentationFetcherFetchAllPagesWithErrors(t *testing.T) {
 
 		default:
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("<html><body>Page content</body></html>"))
+			_, _ = w.Write([]byte("<html><body>Page content</body></html>"))
 		}
 	}))
 	defer testServer.Close()

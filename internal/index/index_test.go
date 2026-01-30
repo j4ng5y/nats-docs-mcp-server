@@ -173,9 +173,15 @@ func TestSearchIndexDocumentFrequency(t *testing.T) {
 	index := NewSearchIndex()
 
 	// Add multiple documents
-	_ = index.AddDocument("doc1", "hello world")
-	_ = index.AddDocument("doc2", "hello test")
-	_ = index.AddDocument("doc3", "world test")
+	if err := index.AddDocument("doc1", "hello world"); err != nil {
+		t.Fatalf("Failed to add document: %v", err)
+	}
+	if err := index.AddDocument("doc2", "hello test"); err != nil {
+		t.Fatalf("Failed to add document: %v", err)
+	}
+	if err := index.AddDocument("doc3", "world test"); err != nil {
+		t.Fatalf("Failed to add document: %v", err)
+	}
 
 	// "hello" appears in 2 documents
 	df := index.GetDocumentFrequency("hello")
@@ -200,9 +206,15 @@ func TestSearchIndexCalculateTFIDF(t *testing.T) {
 	index := NewSearchIndex()
 
 	// Add documents
-	index.AddDocument("doc1", "hello world hello")
-	index.AddDocument("doc2", "hello test")
-	index.AddDocument("doc3", "world test")
+	if err := index.AddDocument("doc1", "hello world hello"); err != nil {
+		t.Fatalf("Failed to add document: %v", err)
+	}
+	if err := index.AddDocument("doc2", "hello test"); err != nil {
+		t.Fatalf("Failed to add document: %v", err)
+	}
+	if err := index.AddDocument("doc3", "world test"); err != nil {
+		t.Fatalf("Failed to add document: %v", err)
+	}
 
 	// Calculate TF-IDF for "hello" in doc1
 	// TF = 2 (appears twice), DF = 2 (appears in 2 docs), total docs = 3
@@ -232,9 +244,15 @@ func TestSearchIndexCalculateRelevance(t *testing.T) {
 	index := NewSearchIndex()
 
 	// Add documents
-	index.AddDocument("doc1", "nats messaging system")
-	index.AddDocument("doc2", "nats jetstream persistence")
-	index.AddDocument("doc3", "kafka messaging system")
+	if err := index.AddDocument("doc1", "nats messaging system"); err != nil {
+		t.Fatalf("Failed to add document: %v", err)
+	}
+	if err := index.AddDocument("doc2", "nats jetstream persistence"); err != nil {
+		t.Fatalf("Failed to add document: %v", err)
+	}
+	if err := index.AddDocument("doc3", "kafka messaging system"); err != nil {
+		t.Fatalf("Failed to add document: %v", err)
+	}
 
 	// Calculate relevance for query "nats messaging"
 	relevance := index.CalculateRelevance("nats messaging", "doc1")
@@ -255,7 +273,9 @@ func TestSearchIndexTokenization(t *testing.T) {
 	index := NewSearchIndex()
 
 	// Test that tokenization handles punctuation and case
-	index.AddDocument("doc1", "Hello, World! This is a test.")
+	if err := index.AddDocument("doc1", "Hello, World! This is a test."); err != nil {
+		t.Fatalf("Failed to add document: %v", err)
+	}
 
 	// Should be able to find lowercase versions
 	tf := index.GetTermFrequency("doc1", "hello")
@@ -336,7 +356,9 @@ func TestDocumentationIndexUpdateDocument(t *testing.T) {
 		Title:   "NATS Concepts",
 		Content: "Initial content",
 	}
-	_ = idx.Index(doc1)
+	if err := idx.Index(doc1); err != nil {
+		t.Fatalf("Failed to index document: %v", err)
+	}
 
 	// Update with new content
 	doc2 := &Document{
@@ -344,7 +366,9 @@ func TestDocumentationIndexUpdateDocument(t *testing.T) {
 		Title:   "NATS Concepts Updated",
 		Content: "Updated content with new information",
 	}
-	_ = idx.Index(doc2)
+	if err := idx.Index(doc2); err != nil {
+		t.Fatalf("Failed to index document: %v", err)
+	}
 
 	// Should still have only 1 document
 	if idx.Count() != 1 {
@@ -655,8 +679,7 @@ func TestDocumentationIndexEmptyContent(t *testing.T) {
 		Content: "",
 	}
 
-	err := idx.Index(doc)
-	if err != nil {
+	if err := idx.Index(doc); err != nil {
 		t.Fatalf("Failed to index document with empty content: %v", err)
 	}
 
@@ -680,7 +703,9 @@ func TestDocumentationIndexNoMatchingDocuments(t *testing.T) {
 		Content: "Some content here",
 	}
 
-	idx.Index(doc)
+	if err := idx.Index(doc); err != nil {
+		t.Fatalf("Failed to index document: %v", err)
+	}
 
 	// Search for term that doesn't exist
 	results, err := idx.Search("nonexistent", 10)

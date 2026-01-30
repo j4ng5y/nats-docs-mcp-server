@@ -217,31 +217,6 @@ func loadFromEnv(cfg *Config) {
 	}
 }
 
-// setDefaults sets default values for all configuration parameters
-func setDefaults(v *viper.Viper) {
-	v.SetDefault("log_level", "info")
-	v.SetDefault("docs_base_url", "https://docs.nats.io")
-	v.SetDefault("fetch_timeout", 30)
-	v.SetDefault("max_concurrent", 5)
-	v.SetDefault("cache_dir", "")
-	v.SetDefault("max_search_results", 50)
-}
-
-// unmarshalConfig unmarshals viper configuration into a Config struct
-func unmarshalConfig(v *viper.Viper) (*Config, error) {
-	// Viper uses snake_case for keys, but we need to map to our struct fields
-	cfg := &Config{
-		LogLevel:         v.GetString("log_level"),
-		DocsBaseURL:      v.GetString("docs_base_url"),
-		FetchTimeout:     v.GetInt("fetch_timeout"),
-		MaxConcurrent:    v.GetInt("max_concurrent"),
-		CacheDir:         v.GetString("cache_dir"),
-		MaxSearchResults: v.GetInt("max_search_results"),
-	}
-
-	return cfg, nil
-}
-
 // NormalizeEnvKey converts environment variable names to viper keys
 // Example: LOG_LEVEL -> log_level
 func NormalizeEnvKey(key string) string {
