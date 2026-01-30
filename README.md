@@ -192,7 +192,7 @@ The server uses session-based in-memory caching:
 ### Running Tests
 
 ```bash
-# Run all tests
+# Run unit tests
 go test -v ./...
 
 # Run tests with coverage
@@ -201,9 +201,11 @@ go test -v -race -coverprofile=coverage.out ./...
 # Run specific package tests
 go test -v ./internal/index
 
-# Run property-based tests
-go test -v -run Property ./...
+# Run property-based tests (manual only, takes longer)
+go test -v -tags=property ./...
 ```
+
+**Note:** Property-based tests are behind a build tag and must be run explicitly with `-tags=property`. They are not run automatically in CI to keep build times fast. To run property tests in GitHub Actions, manually trigger the "Property-Based Tests" workflow from the Actions tab.
 
 ### Building
 

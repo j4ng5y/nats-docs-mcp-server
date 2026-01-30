@@ -29,9 +29,9 @@ dist/
 *~
 .DS_Store
 
-# Binary output
-server
-nats-docs-mcp-server
+# Binary output (in root directory only)
+/server
+/nats-docs-mcp-server
 
 # Configuration files (keep example)
 config.yaml
