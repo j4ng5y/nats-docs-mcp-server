@@ -1,0 +1,177 @@
+# GoReleaser configuration for NATS Documentation MCP Server
+# https://goreleaser.com
+
+version: 2
+
+before:
+  hooks:
+    # Run non-fetcher tests before building (fetcher tests are too slow)
+    - go test -v ./internal/config ./internal/index ./internal/logger ./internal/parser ./internal/server
+    # Ensure dependencies are up to date
+    - go mod tidy
+
+builds:
+  - id: nats-docs-mcp-server
+    main: ./cmd/server
+    binary: nats-docs-mcp-server
+    
+    # Build for multiple platforms
+    goos:
+      - linux
+      - darwin
+      - windows
+    
+    goarch:
+      - amd64
+      - arm64
+    
+    # Static linking - no external dependencies
+    env:
+      - CGO_ENABLED=0
+    
+    # Embed version information via ldflags
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+      - -X main.builtBy=goreleaser
+    
+    # Ignore certain OS/arch combinations that don't make sense
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+# UPX compression for smaller binaries
+upx:
+  - enabled: true
+    ids:
+      - nats-docs-mcp-server
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    compress: best
+    lzma: true
+
+archives:
+  - id: default
+    files:
+      - README.md
+      - LICENSE
+      - config.example.yaml
+    
+    # Archive name format
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    
+    # Use tar.gz for non-Windows, zip for Windows
+    formats:
+      - tar.gz
+      - zip
+
+# Ko build for container images
+# Note: Ko builds are skipped in snapshot mode
+# Set KO_DOCKER_REPO environment variable for releases (e.g., ghcr.io/j4ng5y)
+kos:
+  - id: nats-docs-mcp-server
+    build: nats-docs-mcp-server
+    base_image: gcr.io/distroless/static-debian12:nonroot
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    tags:
+      - '{{.Version}}'
+      - '{{.Major}}.{{.Minor}}'
+      - '{{.Major}}'
+      - latest
+    bare: true
+    preserve_import_paths: false
+    labels:
+      org.opencontainers.image.title: '{{ .ProjectName }}'
+      org.opencontainers.image.description: 'MCP server providing access to NATS documentation'
+      org.opencontainers.image.url: 'https://github.com/j4ng5y/nats-docs-mcp-server'
+      org.opencontainers.image.source: 'https://github.com/j4ng5y/nats-docs-mcp-server'
+      org.opencontainers.image.version: '{{ .Version }}'
+      org.opencontainers.image.created: '{{ .Date }}'
+      org.opencontainers.image.revision: '{{ .FullCommit }}'
+      org.opencontainers.image.licenses: MIT
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+changelog:
+  # Generate changelog from git commits
+  sort: asc
+  use: github
+  
+  filters:
+    # Exclude certain commit types from changelog
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - '^ci:'
+      - 'merge conflict'
+      - Merge pull request
+      - Merge remote-tracking branch
+      - Merge branch
+  
+  groups:
+    - title: 'Features'
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: 'Bug Fixes'
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: 'Performance Improvements'
+      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: 'Other Changes'
+      order: 999
+
+release:
+  # Create GitHub release
+  github:
+    owner: j4ng5y
+    name: nats-docs-mcp-server
+  
+  # Release name format
+  name_template: "{{.ProjectName}} v{{.Version}}"
+  
+  # Include changelog in release notes
+  draft: false
+  prerelease: auto
+  
+  # Release footer
+  footer: |
+    ## Installation
+    
+    ### Binary Download
+    Download the appropriate binary for your platform from the assets below.
+    
+    Extract the archive and run:
+    ```bash
+    ./nats-docs-mcp-server --config config.example.yaml
+    ```
+    
+    ### Container Image
+    ```bash
+    docker run ghcr.io/j4ng5y/nats-docs-mcp-server:{{.Version}}
+    ```
+    
+    See the [README](https://github.com/j4ng5y/nats-docs-mcp-server/blob/main/README.md) for detailed installation and usage instructions.
+
+# Metadata
+metadata:
+  mod_timestamp: '{{ .CommitTimestamp }}'

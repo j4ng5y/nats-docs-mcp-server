@@ -1,0 +1,50 @@
+# NATS Documentation MCP Server Configuration
+# This is an example configuration file showing all available options.
+# Copy this file to config.yaml and customize as needed.
+
+# Logging Configuration
+# Log level: debug, info, warn, error
+# Default: info
+log_level: info
+
+# Documentation Fetching Configuration
+# Base URL for NATS documentation
+# Default: https://docs.nats.io
+docs_url: https://docs.nats.io
+
+# Timeout for fetching individual documentation pages
+# Format: duration string (e.g., "30s", "1m", "500ms")
+# Default: 30s
+fetch_timeout: 30s
+
+# Maximum number of retry attempts for failed fetches
+# Default: 3
+max_retries: 3
+
+# Initial backoff duration for retry attempts (exponential backoff)
+# Format: duration string (e.g., "1s", "500ms")
+# Default: 1s
+retry_backoff: 1s
+
+# Search Configuration
+# Maximum number of search results to return per query
+# Default: 10
+max_search_results: 10
+
+# Caching Strategy
+# This server uses session-based in-memory caching:
+# - Documentation is fetched once at server startup
+# - Cache persists for the entire server session
+# - Cache is NOT persisted to disk between sessions
+# - Each server restart fetches fresh documentation from docs.nats.io
+# - Zero network requests after initial startup fetch
+#
+# Benefits:
+# - Always fresh documentation (fetched at startup)
+# - No stale data concerns (cache cleared on restart)
+# - Fast response times (~1ms for searches after startup)
+# - Predictable memory usage (~15-75 MB)
+#
+# Trade-offs:
+# - Startup time includes documentation fetch (5-30 seconds)
+# - Requires network connection at startup

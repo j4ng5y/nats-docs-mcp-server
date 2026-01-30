@@ -1,0 +1,286 @@
+# NATS Documentation MCP Server
+
+A Model Context Protocol (MCP) server that provides LLMs with programmatic access to NATS documentation from https://docs.nats.io/.
+
+## Features
+
+- **MCP-compliant server** exposing documentation search and retrieval tools
+- **Fast in-memory indexing** with TF-IDF relevance ranking
+- **Session-based caching** - documentation fetched once at startup, cached for the session
+- **Single binary distribution** with no external dependencies
+- **Cross-platform support** - Linux, macOS, Windows on AMD64 and ARM64
+- **Structured logging** with configurable log levels
+- **Graceful shutdown** with proper resource cleanup
+
+## Installation
+
+### Download Pre-built Binaries
+
+Download the latest release for your platform from the [releases page](https://github.com/j4ng5y/nats-docs-mcp-server/releases).
+
+Extract the archive:
+```bash
+tar -xzf nats-docs-mcp-server_*.tar.gz
+cd nats-docs-mcp-server_*
+```
+
+### Build from Source
+
+Requirements:
+- Go 1.22 or later
+- GoReleaser (for building)
+
+```bash
+# Clone the repository
+git clone https://github.com/j4ng5y/nats-docs-mcp-server.git
+cd nats-docs-mcp-server
+
+# Build with GoReleaser
+goreleaser build --snapshot --clean
+
+# Binary will be in dist/ directory
+./dist/nats-docs-mcp-server_linux_amd64_v1/nats-docs-mcp-server --version
+```
+
+## Configuration
+
+The server can be configured via:
+1. Command-line flags (highest priority)
+2. Configuration file (YAML)
+3. Environment variables
+4. Default values (lowest priority)
+
+### Configuration File
+
+Create a `config.yaml` file (see `config.example.yaml` for a complete example):
+
+```yaml
+log_level: info
+docs_url: https://docs.nats.io
+fetch_timeout: 30s
+max_retries: 3
+retry_backoff: 1s
+max_search_results: 10
+```
+
+### Command-line Flags
+
+```bash
+nats-docs-mcp-server --config config.yaml --log-level debug
+```
+
+Available flags:
+- `--config` - Path to configuration file
+- `--log-level` - Log level (debug, info, warn, error)
+- `--version` - Display version information
+- `--help` - Display help message
+
+### Environment Variables
+
+All configuration options can be set via environment variables with the `NATS_DOCS_` prefix:
+
+```bash
+export NATS_DOCS_LOG_LEVEL=debug
+export NATS_DOCS_DOCS_URL=https://docs.nats.io
+export NATS_DOCS_FETCH_TIMEOUT=30s
+```
+
+## Usage
+
+### Running the Server
+
+```bash
+./nats-docs-mcp-server --config config.yaml
+```
+
+The server communicates via stdio using the MCP protocol. It's designed to be used by MCP clients (like Claude Desktop, IDEs, or other AI assistants).
+
+### MCP Tools
+
+The server exposes two MCP tools:
+
+#### 1. search_nats_docs
+
+Search NATS documentation by query string.
+
+**Parameters:**
+- `query` (string, required) - Search query
+- `limit` (integer, optional) - Maximum number of results (default: 10)
+
+**Example:**
+```json
+{
+  "query": "jetstream consumer",
+  "limit": 5
+}
+```
+
+**Returns:**
+Array of search results with:
+- `title` - Document title
+- `url` - Document URL
+- `summary` - Brief excerpt with query context
+- `relevance` - Relevance score (0-1)
+
+#### 2. retrieve_nats_doc
+
+Retrieve full content of a specific documentation page.
+
+**Parameters:**
+- `doc_id` (string, required) - Document ID or URL path
+
+**Example:**
+```json
+{
+  "doc_id": "/nats-concepts/jetstream"
+}
+```
+
+**Returns:**
+Complete document with:
+- `title` - Document title
+- `url` - Document URL
+- `content` - Full document content
+- `sections` - Array of section headings
+
+### Using with Claude Desktop
+
+Add to your Claude Desktop MCP configuration (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+
+```json
+{
+  "mcpServers": {
+    "nats-docs": {
+      "command": "/path/to/nats-docs-mcp-server",
+      "args": ["--config", "/path/to/config.yaml"]
+    }
+  }
+}
+```
+
+## Architecture
+
+### Components
+
+- **Fetcher** - HTTP client with retry logic and rate limiting
+- **Parser** - HTML parser extracting structured content from documentation pages
+- **Index** - In-memory TF-IDF search index with thread-safe access
+- **Server** - MCP server core handling protocol communication
+- **Tools** - MCP tool handlers for search and retrieval
+
+### Caching Strategy
+
+The server uses session-based in-memory caching:
+- Documentation is fetched once at server startup
+- Cache persists for the entire server session
+- Cache is NOT persisted to disk between sessions
+- Each server restart fetches fresh documentation
+- Zero network requests after initial startup
+
+**Benefits:**
+- Always fresh documentation (fetched at startup)
+- No stale data concerns (cache cleared on restart)
+- Fast response times (no network I/O after startup)
+- Predictable memory usage (~15-75 MB)
+
+**Trade-offs:**
+- Startup time includes documentation fetch (5-30 seconds)
+- Requires network connection at startup
+
+## Development
+
+### Running Tests
+
+```bash
+# Run all tests
+go test -v ./...
+
+# Run tests with coverage
+go test -v -race -coverprofile=coverage.out ./...
+
+# Run specific package tests
+go test -v ./internal/index
+
+# Run property-based tests
+go test -v -run Property ./...
+```
+
+### Building
+
+Always use GoReleaser for building:
+
+```bash
+# Development build
+goreleaser build --snapshot --clean
+
+# Test full release process locally
+goreleaser release --snapshot --clean
+```
+
+### Project Structure
+
+```
+.
+├── cmd/server/          # Main entry point
+├── internal/
+│   ├── config/          # Configuration management
+│   ├── fetcher/         # Documentation fetching
+│   ├── parser/          # HTML parsing
+│   ├── index/           # Search indexing
+│   ├── logger/          # Structured logging
+│   └── server/          # MCP server core
+├── .github/workflows/   # CI/CD workflows
+└── .goreleaser.yaml     # Build configuration
+```
+
+## Troubleshooting
+
+### Server fails to start
+
+**Problem:** Server exits immediately or shows connection errors.
+
+**Solution:**
+- Check that no other process is using stdio
+- Verify configuration file is valid YAML
+- Check log output for specific errors
+
+### Documentation fetch fails
+
+**Problem:** Server times out or fails during startup.
+
+**Solution:**
+- Verify network connectivity to https://docs.nats.io
+- Increase `fetch_timeout` in configuration
+- Check firewall/proxy settings
+
+### Search returns no results
+
+**Problem:** Search queries return empty results.
+
+**Solution:**
+- Verify documentation was fetched successfully (check logs)
+- Try broader search terms
+- Check that index was built (look for "indexed N documents" in logs)
+
+### High memory usage
+
+**Problem:** Server uses more memory than expected.
+
+**Solution:**
+- This is expected - all documentation is cached in memory
+- Typical usage: 15-75 MB depending on documentation size
+- Restart server to clear cache and fetch fresh documentation
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
+
+## License
+
+[Add your license here]
+
+## Acknowledgments
+
+- Built with [mcp-go](https://github.com/mark3labs/mcp-go) - MCP SDK for Go
+- Uses [zerolog](https://github.com/rs/zerolog) for structured logging
+- Documentation from [NATS.io](https://nats.io)
