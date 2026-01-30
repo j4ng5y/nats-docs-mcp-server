@@ -24,8 +24,17 @@ func TestDocumentCreation(t *testing.T) {
 	if doc.Title != "Test Document" {
 		t.Errorf("Expected Title 'Test Document', got '%s'", doc.Title)
 	}
+	if doc.URL != "https://docs.nats.io/test" {
+		t.Errorf("Expected URL 'https://docs.nats.io/test', got '%s'", doc.URL)
+	}
+	if doc.Content != "This is test content" {
+		t.Errorf("Expected Content 'This is test content', got '%s'", doc.Content)
+	}
 	if len(doc.Sections) != 1 {
 		t.Errorf("Expected 1 section, got %d", len(doc.Sections))
+	}
+	if doc.LastUpdated.IsZero() {
+		t.Error("Expected LastUpdated to be set, got zero time")
 	}
 }
 
