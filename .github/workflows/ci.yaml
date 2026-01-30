@@ -78,5 +78,3 @@ jobs:
           distribution: goreleaser
           version: v2.13.3
           args: build --snapshot --clean
-        env:
-          KO_DOCKER_REPO: ghcr.io/j4ng5y
