@@ -397,7 +397,7 @@ func TestDocumentationFetcherFetchPage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("<html><body><h1>Test Documentation</h1></body></html>"))
+		_, _ = w.Write([]byte("<html><body><h1>Test Documentation</h1></body></html>"))
 	}))
 	defer server.Close()
 
@@ -473,7 +473,7 @@ func TestDocumentationFetcherFetchPageWithRetry(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("<html><body>Success after retries</body></html>"))
+		_, _ = w.Write([]byte("<html><body>Success after retries</body></html>"))
 	}))
 	defer server.Close()
 
@@ -502,7 +502,7 @@ func TestDocumentationFetcherLogging(t *testing.T) {
 	// Create a test server that returns success
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("<html><body>Test content</body></html>"))
+		_, _ = w.Write([]byte("<html><body>Test content</body></html>"))
 	}))
 	defer server.Close()
 

@@ -56,8 +56,7 @@ func TestNewServer(t *testing.T) {
 				}
 				if server == nil {
 					t.Errorf("expected server but got nil")
-				}
-				if server.initialized {
+				} else if server.initialized {
 					t.Errorf("expected initialized to be false, got true")
 				}
 			}

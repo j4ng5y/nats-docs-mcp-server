@@ -435,7 +435,9 @@ func TestDocumentationIndexEmptyQuery(t *testing.T) {
 		Title:   "Test",
 		Content: "Test content",
 	}
-	idx.Index(doc)
+	if err := idx.Index(doc); err != nil {
+		t.Fatalf("Failed to index document: %v", err)
+	}
 
 	results, err := idx.Search("", 10)
 	if err == nil {
@@ -456,7 +458,9 @@ func TestDocumentationIndexSearchLimit(t *testing.T) {
 			Title:   fmt.Sprintf("Document %d", i),
 			Content: "NATS messaging system",
 		}
-		idx.Index(doc)
+		if err := idx.Index(doc); err != nil {
+			t.Fatalf("Failed to index document: %v", err)
+		}
 	}
 
 	// Search with limit of 5
@@ -478,7 +482,9 @@ func TestDocumentationIndexCaseInsensitiveSearch(t *testing.T) {
 		Title:   "Test Document",
 		Content: "NATS Messaging System",
 	}
-	idx.Index(doc)
+	if err := idx.Index(doc); err != nil {
+		t.Fatalf("Failed to index document: %v", err)
+	}
 
 	// Search with different cases
 	results1, _ := idx.Search("nats", 10)
