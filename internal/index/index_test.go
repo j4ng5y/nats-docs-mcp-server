@@ -71,7 +71,7 @@ func TestDocumentStoreGetDocument(t *testing.T) {
 		Content: "Test content",
 	}
 
-	store.AddDocument(doc)
+	_ = store.AddDocument(doc)
 
 	retrieved, err := store.GetDocument("test-doc")
 	if err != nil {
@@ -104,7 +104,7 @@ func TestDocumentStoreThreadSafety(t *testing.T) {
 		Title:   "Test Document",
 		Content: "Test content",
 	}
-	store.AddDocument(doc)
+	_ = store.AddDocument(doc)
 
 	// Test concurrent reads
 	done := make(chan bool)
@@ -154,7 +154,7 @@ func TestSearchIndexTermFrequency(t *testing.T) {
 	index := NewSearchIndex()
 
 	// Add document with repeated terms
-	index.AddDocument("doc1", "hello world hello test")
+	_ = index.AddDocument("doc1", "hello world hello test")
 
 	// Check term frequency for "hello" (appears twice)
 	tf := index.GetTermFrequency("doc1", "hello")
@@ -173,9 +173,9 @@ func TestSearchIndexDocumentFrequency(t *testing.T) {
 	index := NewSearchIndex()
 
 	// Add multiple documents
-	index.AddDocument("doc1", "hello world")
-	index.AddDocument("doc2", "hello test")
-	index.AddDocument("doc3", "world test")
+	_ = index.AddDocument("doc1", "hello world")
+	_ = index.AddDocument("doc2", "hello test")
+	_ = index.AddDocument("doc3", "world test")
 
 	// "hello" appears in 2 documents
 	df := index.GetDocumentFrequency("hello")
@@ -312,7 +312,7 @@ func TestDocumentationIndexGetDocument(t *testing.T) {
 		Content: "NATS is a messaging system",
 	}
 
-	idx.Index(doc)
+	_ = idx.Index(doc)
 
 	retrieved, err := idx.Get("nats-concepts")
 	if err != nil {
@@ -336,7 +336,7 @@ func TestDocumentationIndexUpdateDocument(t *testing.T) {
 		Title:   "NATS Concepts",
 		Content: "Initial content",
 	}
-	idx.Index(doc1)
+	_ = idx.Index(doc1)
 
 	// Update with new content
 	doc2 := &Document{
@@ -344,7 +344,7 @@ func TestDocumentationIndexUpdateDocument(t *testing.T) {
 		Title:   "NATS Concepts Updated",
 		Content: "Updated content with new information",
 	}
-	idx.Index(doc2)
+	_ = idx.Index(doc2)
 
 	// Should still have only 1 document
 	if idx.Count() != 1 {

@@ -49,7 +49,7 @@ func TestHTTPClientSuccessfulFetch(t *testing.T) {
 	// Create a test server that returns success
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("test content"))
+		_, _ = w.Write([]byte("test content"))
 	}))
 	defer server.Close()
 
@@ -97,7 +97,7 @@ func TestHTTPClientRetryOnFailure(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("success after retries"))
+		_, _ = w.Write([]byte("success after retries"))
 	}))
 	defer server.Close()
 
