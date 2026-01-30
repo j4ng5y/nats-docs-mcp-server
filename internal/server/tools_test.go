@@ -217,11 +217,8 @@ func TestSearchToolHandler(t *testing.T) {
 				return
 			}
 
-			// Check if result indicates error when expected
-			if tt.expectError {
-				// Error results should contain error information
-				// The result is already verified to be non-nil above
-			}
+			// Error results are already verified to be non-nil above
+			// No additional checks needed for error cases
 		})
 	}
 }

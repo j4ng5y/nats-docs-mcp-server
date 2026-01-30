@@ -110,7 +110,7 @@ func (c *HTTPClient) Fetch(ctx context.Context, url string) ([]byte, error) {
 
 		// Read response body
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if err != nil {
 			lastErr = fmt.Errorf("failed to read response body: %w", err)

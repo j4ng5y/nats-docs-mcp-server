@@ -1,10 +1,10 @@
 package config
 
 import (
-"os"
-"path/filepath"
-"strings"
-"testing"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
 )
 
 // TestDefaultConfig verifies that NewConfig returns a Config with all default values set
@@ -143,19 +143,19 @@ func TestMultipleNewConfigCalls(t *testing.T) {
 // TestLoadFromEnvironmentVariables verifies that configuration can be loaded from environment variables
 func TestLoadFromEnvironmentVariables(t *testing.T) {
 	// Set environment variables
-	os.Setenv("LOG_LEVEL", "debug")
-	os.Setenv("DOCS_BASE_URL", "https://test.example.com")
-	os.Setenv("FETCH_TIMEOUT", "60")
-	os.Setenv("MAX_CONCURRENT", "10")
-	os.Setenv("CACHE_DIR", "/tmp/test-cache")
-	os.Setenv("MAX_SEARCH_RESULTS", "100")
+	_ = os.Setenv("LOG_LEVEL", "debug")
+	_ = os.Setenv("DOCS_BASE_URL", "https://test.example.com")
+	_ = os.Setenv("FETCH_TIMEOUT", "60")
+	_ = os.Setenv("MAX_CONCURRENT", "10")
+	_ = os.Setenv("CACHE_DIR", "/tmp/test-cache")
+	_ = os.Setenv("MAX_SEARCH_RESULTS", "100")
 	defer func() {
-		os.Unsetenv("LOG_LEVEL")
-		os.Unsetenv("DOCS_BASE_URL")
-		os.Unsetenv("FETCH_TIMEOUT")
-		os.Unsetenv("MAX_CONCURRENT")
-		os.Unsetenv("CACHE_DIR")
-		os.Unsetenv("MAX_SEARCH_RESULTS")
+		_ = os.Unsetenv("LOG_LEVEL")
+		_ = os.Unsetenv("DOCS_BASE_URL")
+		_ = os.Unsetenv("FETCH_TIMEOUT")
+		_ = os.Unsetenv("MAX_CONCURRENT")
+		_ = os.Unsetenv("CACHE_DIR")
+		_ = os.Unsetenv("MAX_SEARCH_RESULTS")
 	}()
 
 	cfg, err := Load()
@@ -238,12 +238,12 @@ max_search_results: 75
 // TestLoadWithDefaults verifies that Load returns defaults when no config is provided
 func TestLoadWithDefaults(t *testing.T) {
 	// Clear any environment variables that might interfere
-	os.Unsetenv("LOG_LEVEL")
-	os.Unsetenv("DOCS_BASE_URL")
-	os.Unsetenv("FETCH_TIMEOUT")
-	os.Unsetenv("MAX_CONCURRENT")
-	os.Unsetenv("CACHE_DIR")
-	os.Unsetenv("MAX_SEARCH_RESULTS")
+	_ = os.Unsetenv("LOG_LEVEL")
+	_ = os.Unsetenv("DOCS_BASE_URL")
+	_ = os.Unsetenv("FETCH_TIMEOUT")
+	_ = os.Unsetenv("MAX_CONCURRENT")
+	_ = os.Unsetenv("CACHE_DIR")
+	_ = os.Unsetenv("MAX_SEARCH_RESULTS")
 
 	cfg, err := Load()
 	if err != nil {
@@ -279,11 +279,11 @@ func TestLoadWithDefaults(t *testing.T) {
 // TestConfigPrecedence verifies that config file takes precedence over environment variables
 func TestConfigPrecedence(t *testing.T) {
 	// Set environment variables
-	os.Setenv("LOG_LEVEL", "debug")
-	os.Setenv("DOCS_BASE_URL", "https://env.example.com")
+	_ = os.Setenv("LOG_LEVEL", "debug")
+	_ = os.Setenv("DOCS_BASE_URL", "https://env.example.com")
 	defer func() {
-		os.Unsetenv("LOG_LEVEL")
-		os.Unsetenv("DOCS_BASE_URL")
+		_ = os.Unsetenv("LOG_LEVEL")
+		_ = os.Unsetenv("DOCS_BASE_URL")
 	}()
 
 	// Create a config file with different values
@@ -315,11 +315,11 @@ docs_base_url: https://file.example.com
 // TestLoadWithFlags verifies that command-line flags have highest precedence
 func TestLoadWithFlags(t *testing.T) {
 	// Set environment variables
-	os.Setenv("LOG_LEVEL", "debug")
-	os.Setenv("DOCS_BASE_URL", "https://env.example.com")
+	_ = os.Setenv("LOG_LEVEL", "debug")
+	_ = os.Setenv("DOCS_BASE_URL", "https://env.example.com")
 	defer func() {
-		os.Unsetenv("LOG_LEVEL")
-		os.Unsetenv("DOCS_BASE_URL")
+		_ = os.Unsetenv("LOG_LEVEL")
+		_ = os.Unsetenv("DOCS_BASE_URL")
 	}()
 
 	// Create a config file
@@ -368,8 +368,8 @@ fetch_timeout: 45
 // TestLoadWithFlagsNoConfigFile verifies LoadWithFlags works without a config file
 func TestLoadWithFlagsNoConfigFile(t *testing.T) {
 	// Clear environment variables
-	os.Unsetenv("LOG_LEVEL")
-	os.Unsetenv("DOCS_BASE_URL")
+	_ = os.Unsetenv("LOG_LEVEL")
+	_ = os.Unsetenv("DOCS_BASE_URL")
 
 	flags := map[string]interface{}{
 		"log_level":     "debug",
@@ -459,11 +459,11 @@ func TestLoadWithNilFlags(t *testing.T) {
 
 // TestLoadFromEnvWithInvalidIntegers verifies that invalid integer env vars are ignored
 func TestLoadFromEnvWithInvalidIntegers(t *testing.T) {
-	os.Setenv("FETCH_TIMEOUT", "not-a-number")
-	os.Setenv("MAX_CONCURRENT", "invalid")
+	_ = os.Setenv("FETCH_TIMEOUT", "not-a-number")
+	_ = os.Setenv("MAX_CONCURRENT", "invalid")
 	defer func() {
-		os.Unsetenv("FETCH_TIMEOUT")
-		os.Unsetenv("MAX_CONCURRENT")
+		_ = os.Unsetenv("FETCH_TIMEOUT")
+		_ = os.Unsetenv("MAX_CONCURRENT")
 	}()
 
 	cfg, err := Load()
@@ -674,8 +674,8 @@ func TestValidateMultipleErrors(t *testing.T) {
 
 // TestLoadValidatesConfiguration verifies that Load validates the configuration
 func TestLoadValidatesConfiguration(t *testing.T) {
-	os.Setenv("LOG_LEVEL", "invalid")
-	defer os.Unsetenv("LOG_LEVEL")
+	_ = os.Setenv("LOG_LEVEL", "invalid")
+	defer func() { _ = os.Unsetenv("LOG_LEVEL") }()
 
 	_, err := Load()
 	if err == nil {
@@ -714,4 +714,3 @@ func TestLoadWithFlagsValidatesConfiguration(t *testing.T) {
 		t.Error("Expected LoadWithFlags to return validation error")
 	}
 }
-
