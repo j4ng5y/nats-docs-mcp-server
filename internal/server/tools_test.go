@@ -220,10 +220,7 @@ func TestSearchToolHandler(t *testing.T) {
 			// Check if result indicates error when expected
 			if tt.expectError {
 				// Error results should contain error information
-				// We can't easily check the internal structure, but we can verify it's not nil
-				if result == nil {
-					t.Errorf("expected error result but got nil")
-				}
+				// The result is already verified to be non-nil above
 			}
 		})
 	}
@@ -295,14 +292,8 @@ func TestRetrieveToolHandler(t *testing.T) {
 				return
 			}
 
-			// For valid doc IDs, check that the result contains expected content
-			if !tt.expectError && tt.docID == "/test/doc1" {
-				// The result should contain the document title and content
-				// We can't easily access the internal structure, but we verified it's not nil
-				if result == nil {
-					t.Errorf("expected valid result but got nil")
-				}
-			}
+			// For valid doc IDs, result is already verified to be non-nil above
+			// The result contains the document title and content
 		})
 	}
 }
