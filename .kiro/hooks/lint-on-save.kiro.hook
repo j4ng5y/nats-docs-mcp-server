@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "name": "Lint Go Code on Save",
+  "description": "Runs golangci-lint automatically when any Go file is saved to catch linting issues early",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "*.go"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Run golangci-lint on the edited file and report any linting issues found. If there are issues, suggest fixes."
+  }
+}
