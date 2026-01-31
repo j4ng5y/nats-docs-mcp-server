@@ -31,6 +31,72 @@ retry_backoff: 1s
 # Default: 10
 max_search_results: 10
 
+# Syncp (Synadia Control Plane) Documentation Support
+# This section enables support for dual documentation sources: NATS and Syncp
+# When enabled, queries are automatically routed to the appropriate documentation source
+# or both sources based on keyword classification
+#
+# Backward Compatibility:
+# - Setting syncp.enabled to false (default) maintains NATS-only behavior
+# - Existing configurations work unchanged without adding syncp configuration
+# - Syncp documentation fetching is optional; if it fails, server continues with NATS only
+
+syncp:
+  # Enable Syncp documentation support
+  # Set to true to include Syncp documentation alongside NATS documentation
+  # Set to false to use NATS documentation only (default)
+  # Default: false
+  enabled: false
+
+  # Base URL for Syncp documentation
+  # Required when syncp.enabled is true, ignored when disabled
+  # Default: https://docs.synadia.com/control-plane
+  base_url: https://docs.synadia.com/control-plane
+
+  # Timeout for fetching Syncp documentation pages
+  # Format: duration string (e.g., "30s", "1m", "500ms")
+  # This is separate from NATS fetch_timeout for independent control
+  # Default: 30s
+  fetch_timeout: 30s
+
+# Query Classification Configuration
+# This section defines keywords that determine which documentation source(s) to search
+# Based on keywords found in the query, the system routes to:
+# - NATS documentation if only NATS keywords found
+# - Syncp documentation if only Syncp keywords found
+# - Both sources if both keywords found or keywords are ambiguous
+#
+# Example queries:
+# - "jetstream basics" → NATS only (contains NATS keyword "jetstream")
+# - "control plane setup" → Syncp only (contains Syncp keyword "control-plane")
+# - "authentication nats" → Both sources (contains both keywords)
+# - "streaming setup" → Both sources (ambiguous, keywords match both)
+
+classification:
+  # Keywords specific to Syncp documentation
+  # When any of these keywords appear in a query, Syncp documentation is considered
+  syncp_keywords:
+    - syncp
+    - control-plane
+    - synadia
+    - namespace
+    - managed
+    - system
+
+  # Keywords specific to NATS documentation
+  # When any of these keywords appear in a query, NATS documentation is considered
+  nats_keywords:
+    - jetstream
+    - nats-server
+    - nats-cli
+    - subject
+    - stream
+    - consumer
+    - service
+    - rpc
+    - kvstore
+    - objectstore
+
 # Caching Strategy
 # This server uses session-based in-memory caching:
 # - Documentation is fetched once at server startup
@@ -48,3 +114,37 @@ max_search_results: 10
 # Trade-offs:
 # - Startup time includes documentation fetch (5-30 seconds)
 # - Requires network connection at startup
+
+# Transport Configuration
+# The server supports multiple transport types for different deployment scenarios:
+# - stdio: Standard I/O (default) - for local process integrations
+# - sse: Server-Sent Events - for web-based clients
+# - streamablehttp: Full HTTP - for enterprise deployments
+
+# STDIO Transport Example (default)
+# Suitable for local development and Claude Desktop
+transport_type: stdio
+
+# SSE Transport Example
+# Uncomment below to enable SSE transport
+# transport_type: sse
+# host: 0.0.0.0
+# port: 8080
+
+# StreamableHTTP Transport Example
+# Uncomment below to enable StreamableHTTP transport
+# transport_type: streamablehttp
+# host: 0.0.0.0
+# port: 8080
+
+# Transport Host Configuration
+# Only used for network-based transports (sse, streamablehttp)
+# Examples: localhost, 0.0.0.0, 127.0.0.1, your.domain.com
+# Default: localhost
+# host: localhost
+
+# Transport Port Configuration
+# Only used for network-based transports (sse, streamablehttp)
+# Must be a valid port number (1-65535)
+# Default: 0 (dynamically assigned, only for stdio transport)
+# port: 8080

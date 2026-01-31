@@ -155,10 +155,8 @@ func TestSearchToolHandler(t *testing.T) {
 		},
 	}
 
-	for _, doc := range testDocs {
-		if err := srv.index.Index(doc); err != nil {
-			t.Fatalf("failed to index document: %v", err)
-		}
+	if err := srv.indexManager.IndexNATS(testDocs); err != nil {
+		t.Fatalf("failed to index documents: %v", err)
 	}
 
 	tests := []struct {
@@ -245,7 +243,7 @@ func TestRetrieveToolHandler(t *testing.T) {
 		},
 	}
 
-	if err := srv.index.Index(testDoc); err != nil {
+	if err := srv.indexManager.IndexNATS([]*index.Document{testDoc}); err != nil {
 		t.Fatalf("failed to index document: %v", err)
 	}
 
@@ -306,8 +304,9 @@ func TestToolHandlerConcurrency(t *testing.T) {
 	srv.initialized = true
 
 	// Add test documents
+	testDocs := make([]*index.Document, 10)
 	for i := 0; i < 10; i++ {
-		doc := &index.Document{
+		testDocs[i] = &index.Document{
 			ID:      strings.Join([]string{"/test/doc", string(rune('0' + i))}, ""),
 			Title:   strings.Join([]string{"Document ", string(rune('0' + i))}, ""),
 			URL:     strings.Join([]string{"https://docs.nats.io/test/doc", string(rune('0' + i))}, ""),
@@ -316,9 +315,9 @@ func TestToolHandlerConcurrency(t *testing.T) {
 				{Heading: "Section", Content: "Content", Level: 1},
 			},
 		}
-		if err := srv.index.Index(doc); err != nil {
-			t.Fatalf("failed to index document: %v", err)
-		}
+	}
+	if err := srv.indexManager.IndexNATS(testDocs); err != nil {
+		t.Fatalf("failed to index documents: %v", err)
 	}
 
 	// Run concurrent searches

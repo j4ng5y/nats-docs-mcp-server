@@ -10,10 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/j4ng5y/nats-docs-mcp-server/internal/classifier"
 	"github.com/j4ng5y/nats-docs-mcp-server/internal/config"
 	"github.com/j4ng5y/nats-docs-mcp-server/internal/fetcher"
 	"github.com/j4ng5y/nats-docs-mcp-server/internal/index"
 	"github.com/j4ng5y/nats-docs-mcp-server/internal/parser"
+	"github.com/j4ng5y/nats-docs-mcp-server/internal/search"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/rs/zerolog"
@@ -21,13 +23,17 @@ import (
 
 // Server represents the MCP server instance with all its dependencies.
 // It coordinates the MCP protocol handling, documentation indexing, and tool execution.
+// Supports dual documentation sources (NATS and Syncp) with classification-based routing.
 type Server struct {
-	config      *config.Config
-	index       *index.DocumentationIndex
-	logger      *slog.Logger
-	mcpServer   *server.MCPServer
-	fetcher     *fetcher.DocumentationFetcher
-	initialized bool
+	config       *config.Config
+	indexManager *index.Manager           // Dual-index manager for NATS and Syncp
+	orchestrator *search.Orchestrator     // Search orchestrator for multi-source search
+	classifier   classifier.Classifier    // Query classifier for routing
+	logger       *slog.Logger
+	mcpServer    *server.MCPServer
+	multiFetcher *fetcher.MultiSourceFetcher // Fetcher for both NATS and Syncp
+	transport    TransportStarter
+	initialized  bool
 }
 
 // NewServer creates a new MCP server instance with the provided configuration and logger.
@@ -38,6 +44,7 @@ type Server struct {
 //   - logger: Structured logger for logging
 //
 // Returns a configured Server instance ready to be started.
+// Returns an error if transport creation fails.
 func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("config cannot be nil")
@@ -46,44 +53,75 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		return nil, fmt.Errorf("logger cannot be nil")
 	}
 
+	// Validate transport configuration
+	if err := cfg.ValidateTransport(); err != nil {
+		return nil, fmt.Errorf("invalid transport configuration: %w", err)
+	}
+
 	// Create MCP server instance
 	mcpServer := server.NewMCPServer(
 		"nats-docs-mcp-server",
 		"1.0.0",
 	)
 
-	// Create documentation index
-	docIndex := index.NewDocumentationIndex()
+	// Create index manager for dual indices (NATS and Syncp)
+	indexManager := index.NewManager()
 
-	// Create HTTP client for fetching
-	httpClient := fetcher.NewHTTPClient(
-		time.Duration(cfg.FetchTimeout)*time.Second, // Convert seconds to Duration
-		5, // Max retries
-		cfg.MaxConcurrent,
+	// Create classifier with configured keywords
+	queryClassifier := classifier.NewKeywordClassifier(
+		cfg.SyncpKeywords,
+		cfg.NATSKeywords,
+	)
+
+	// Create search orchestrator
+	searchOrchestrator := search.NewOrchestrator(
+		indexManager.GetNATSIndex(),
+		indexManager.GetSyncpIndex(),
+		queryClassifier,
 	)
 
 	// Create zerolog logger for fetcher (use os.Stderr for structured logging)
 	zerologLogger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
 
-	// Create documentation fetcher
-	docFetcher := fetcher.NewDocumentationFetcher(
-		httpClient,
-		cfg.DocsBaseURL,
-		zerologLogger,
-	)
+	// Create multi-source fetcher for both NATS and Syncp
+	natsConfig := fetcher.FetchConfig{
+		BaseURL:       cfg.DocsBaseURL,
+		MaxRetries:    5,
+		FetchTimeout:  time.Duration(cfg.FetchTimeout) * time.Second,
+		MaxConcurrent: cfg.MaxConcurrent,
+	}
+
+	syncpConfig := fetcher.FetchConfig{
+		BaseURL:       cfg.SyncpBaseURL,
+		MaxRetries:    5,
+		FetchTimeout:  time.Duration(cfg.SyncpFetchTimeout) * time.Second,
+		MaxConcurrent: cfg.MaxConcurrent,
+	}
+
+	multiFetcher := fetcher.NewMultiSourceFetcher(natsConfig, syncpConfig, zerologLogger)
+
+	// Create transport based on configuration
+	transport, err := NewTransport(cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create transport: %w", err)
+	}
 
 	return &Server{
-		config:      cfg,
-		index:       docIndex,
-		logger:      logger,
-		mcpServer:   mcpServer,
-		fetcher:     docFetcher,
-		initialized: false,
+		config:       cfg,
+		indexManager: indexManager,
+		orchestrator: searchOrchestrator,
+		classifier:   queryClassifier,
+		logger:       logger,
+		mcpServer:    mcpServer,
+		multiFetcher: multiFetcher,
+		transport:    transport,
+		initialized:  false,
 	}, nil
 }
 
 // Initialize performs server initialization including documentation fetching and indexing.
 // This should be called before Start() to ensure the server is ready to handle requests.
+// Fetches both NATS and Syncp documentation (if enabled) and indexes them separately.
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control
@@ -96,31 +134,38 @@ func (s *Server) Initialize(ctx context.Context) error {
 
 	s.logger.Info("Starting server initialization")
 
-	// Fetch all documentation pages
-	s.logger.Info("Fetching documentation from", "base_url", s.config.DocsBaseURL)
-	pages, err := s.fetcher.FetchAllPages(ctx)
+	// Fetch NATS documentation (always required)
+	s.logger.Info("Fetching NATS documentation", "base_url", s.config.DocsBaseURL)
+	natsPages, err := s.multiFetcher.FetchNATS(ctx)
 	if err != nil {
-		s.logger.Error("Failed to fetch documentation", "error", err)
-		return fmt.Errorf("failed to fetch documentation: %w", err)
+		s.logger.Error("Failed to fetch NATS documentation", "error", err)
+		return fmt.Errorf("failed to fetch NATS documentation: %w", err)
+	}
+	s.logger.Info("Fetched NATS documentation pages", "count", len(natsPages))
+
+	// Fetch Syncp documentation (if enabled, graceful degradation if fails)
+	var syncpPages []fetcher.DocumentPage
+	if s.config.SyncpEnabled {
+		s.logger.Info("Fetching Syncp documentation", "base_url", s.config.SyncpBaseURL)
+		syncpPages, err = s.multiFetcher.FetchSyncp(ctx)
+		if err != nil {
+			s.logger.Warn("Failed to fetch Syncp documentation, continuing with NATS only", "error", err)
+			syncpPages = []fetcher.DocumentPage{}
+		} else {
+			s.logger.Info("Fetched Syncp documentation pages", "count", len(syncpPages))
+		}
 	}
 
-	s.logger.Info("Fetched documentation pages", "count", len(pages))
-
-	// Parse and index each page
-	s.logger.Info("Parsing and indexing documentation")
-	successCount := 0
-	failCount := 0
-
-	for _, page := range pages {
-		// Parse HTML content
+	// Parse and index NATS documentation
+	s.logger.Info("Parsing and indexing NATS documentation")
+	natsIndexDocs := make([]*index.Document, 0)
+	for _, page := range natsPages {
 		doc, err := parser.ParseHTML(strings.NewReader(string(page.Content)))
 		if err != nil {
-			s.logger.Warn("Failed to parse page", "path", page.Path, "error", err)
-			failCount++
+			s.logger.Warn("Failed to parse NATS page", "path", page.Path, "error", err)
 			continue
 		}
 
-		// Convert parser.Document to index.Document
 		indexDoc := &index.Document{
 			ID:       page.Path,
 			Title:    doc.Title,
@@ -128,25 +173,56 @@ func (s *Server) Initialize(ctx context.Context) error {
 			Content:  extractContent(doc),
 			Sections: convertSections(doc.Sections),
 		}
+		natsIndexDocs = append(natsIndexDocs, indexDoc)
+	}
 
-		// Index the document
-		if err := s.index.Index(indexDoc); err != nil {
-			s.logger.Warn("Failed to index document", "path", page.Path, "error", err)
-			failCount++
-			continue
+	// Index NATS documents
+	if len(natsIndexDocs) == 0 {
+		return fmt.Errorf("failed to parse any NATS documentation pages")
+	}
+
+	if err := s.indexManager.IndexNATS(natsIndexDocs); err != nil {
+		s.logger.Error("Failed to index NATS documentation", "error", err)
+		return fmt.Errorf("failed to index NATS documentation: %w", err)
+	}
+	s.logger.Info("NATS documentation indexed", "count", len(natsIndexDocs))
+
+	// Parse and index Syncp documentation (if available)
+	if len(syncpPages) > 0 {
+		s.logger.Info("Parsing and indexing Syncp documentation")
+		syncpIndexDocs := make([]*index.Document, 0)
+		for _, page := range syncpPages {
+			doc, err := parser.ParseHTML(strings.NewReader(string(page.Content)))
+			if err != nil {
+				s.logger.Warn("Failed to parse Syncp page", "path", page.Path, "error", err)
+				continue
+			}
+
+			indexDoc := &index.Document{
+				ID:       page.Path,
+				Title:    doc.Title,
+				URL:      s.config.SyncpBaseURL + page.Path,
+				Content:  extractContent(doc),
+				Sections: convertSections(doc.Sections),
+			}
+			syncpIndexDocs = append(syncpIndexDocs, indexDoc)
 		}
 
-		successCount++
+		if len(syncpIndexDocs) > 0 {
+			if err := s.indexManager.IndexSyncp(syncpIndexDocs); err != nil {
+				s.logger.Warn("Failed to index Syncp documentation, continuing with NATS only", "error", err)
+			} else {
+				s.logger.Info("Syncp documentation indexed", "count", len(syncpIndexDocs))
+			}
+		}
 	}
 
+	// Report index statistics
+	stats := s.indexManager.Stats()
 	s.logger.Info("Documentation indexing complete",
-		"successful", successCount,
-		"failed", failCount,
-		"total", len(pages))
-
-	if successCount == 0 {
-		return fmt.Errorf("failed to index any documentation pages")
-	}
+		"nats_docs", stats.NATSDocCount,
+		"syncp_docs", stats.SyncpDocCount,
+		"total_docs", stats.TotalDocCount)
 
 	s.initialized = true
 	return nil
@@ -206,11 +282,14 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("server not initialized, call Initialize() first")
 	}
 
-	s.logger.Info("Starting MCP server")
+	s.logger.Info("Starting MCP server", "transport", s.transport.Type())
+	if addr := s.config.GetTransportAddress(); addr != "" {
+		s.logger.Info("Transport address", "address", addr)
+	}
 
-	// Start the MCP server with stdio transport
-	if err := server.ServeStdio(s.mcpServer); err != nil {
-		s.logger.Error("MCP server error", "error", err)
+	// Start the transport with the MCP server
+	if err := s.transport.Start(ctx, s.mcpServer); err != nil {
+		s.logger.Error("MCP server error", "error", err, "transport", s.transport.Type())
 		return fmt.Errorf("MCP server error: %w", err)
 	}
 
@@ -224,12 +303,15 @@ func (s *Server) Start(ctx context.Context) error {
 //
 // Returns an error if shutdown fails.
 func (s *Server) Shutdown(ctx context.Context) error {
-	s.logger.Info("Shutting down server")
+	s.logger.Info("Shutting down server", "transport", s.transport.Type())
 
-	// The mcp-go server handles shutdown via signal handling in ServeStdio
-	// No additional cleanup needed for now
+	// Shutdown the transport
+	if err := s.transport.Shutdown(ctx); err != nil {
+		s.logger.Error("Error during transport shutdown", "error", err, "transport", s.transport.Type())
+		return fmt.Errorf("transport shutdown error: %w", err)
+	}
 
-	s.logger.Info("Server shutdown complete")
+	s.logger.Info("Server shutdown complete", "transport", s.transport.Type())
 	return nil
 }
 
@@ -257,6 +339,7 @@ func convertSections(sections []parser.Section) []index.Section {
 }
 
 // handleSearchTool handles the search_nats_docs tool invocation
+// Uses the Search Orchestrator to route queries to appropriate documentation source(s)
 func (s *Server) handleSearchTool(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Extract query parameter (required)
 	query, err := request.RequireString("query")
@@ -267,22 +350,22 @@ func (s *Server) handleSearchTool(ctx context.Context, request mcp.CallToolReque
 	// Extract limit parameter (optional, default to 10)
 	limit := request.GetInt("limit", 10)
 
-	// Perform search
-	results, err := s.index.Search(query, limit)
+	// Perform multi-source search using orchestrator
+	results, err := s.orchestrator.Search(query, limit)
 	if err != nil {
 		s.logger.Error("Search failed", "query", query, "error", err)
 		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
 	}
 
-	// Format results
+	// Format results with source information
 	var content strings.Builder
 	content.WriteString(fmt.Sprintf("Found %d results for query: %s\n\n", len(results), query))
 
 	for i, result := range results {
-		content.WriteString(fmt.Sprintf("%d. %s\n", i+1, result.Title))
+		content.WriteString(fmt.Sprintf("%d. %s [%s]\n", i+1, result.Title, result.Source))
 		content.WriteString(fmt.Sprintf("   URL: %s\n", result.URL))
-		content.WriteString(fmt.Sprintf("   Relevance: %.2f\n", result.Relevance))
-		content.WriteString(fmt.Sprintf("   Summary: %s\n\n", result.Summary))
+		content.WriteString(fmt.Sprintf("   Relevance: %.2f\n", result.Score))
+		content.WriteString(fmt.Sprintf("   Summary: %s\n\n", result.Snippet))
 	}
 
 	s.logger.Info("Search completed", "query", query, "results", len(results))
@@ -291,6 +374,7 @@ func (s *Server) handleSearchTool(ctx context.Context, request mcp.CallToolReque
 }
 
 // handleRetrieveTool handles the retrieve_nats_doc tool invocation
+// Retrieves documents from both NATS and Syncp indices
 func (s *Server) handleRetrieveTool(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Extract doc_id parameter (required)
 	docID, err := request.RequireString("doc_id")
@@ -298,11 +382,15 @@ func (s *Server) handleRetrieveTool(ctx context.Context, request mcp.CallToolReq
 		return mcp.NewToolResultError("doc_id parameter is required and must be a non-empty string"), nil
 	}
 
-	// Retrieve document
-	doc, err := s.index.Get(docID)
+	// Try to retrieve from NATS index first
+	doc, err := s.indexManager.GetNATSIndex().Get(docID)
 	if err != nil {
-		s.logger.Warn("Document not found", "doc_id", docID, "error", err)
-		return mcp.NewToolResultError(fmt.Sprintf("document not found: %s", docID)), nil
+		// Try Syncp index if NATS fails
+		doc, err = s.indexManager.GetSyncpIndex().Get(docID)
+		if err != nil {
+			s.logger.Warn("Document not found in any index", "doc_id", docID)
+			return mcp.NewToolResultError(fmt.Sprintf("document not found: %s", docID)), nil
+		}
 	}
 
 	// Format document content

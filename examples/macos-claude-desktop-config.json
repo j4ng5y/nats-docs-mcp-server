@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "nats-docs": {
+      "command": "/usr/local/bin/nats-docs-mcp-server",
+      "args": [
+        "--config",
+        "/Users/USERNAME/.config/nats-docs/config.yaml"
+      ],
+      "description": "NATS Documentation - search NATS and Syncp docs"
+    }
+  }
+}

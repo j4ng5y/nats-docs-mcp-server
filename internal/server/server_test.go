@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -9,7 +10,37 @@ import (
 
 	"github.com/j4ng5y/nats-docs-mcp-server/internal/config"
 	"github.com/j4ng5y/nats-docs-mcp-server/internal/index"
+	"github.com/mark3labs/mcp-go/server"
 )
+
+// MockTransport implements TransportStarter for testing
+type MockTransport struct {
+	StartCalled     bool
+	StartCtx        context.Context
+	StartMCPServer  *server.MCPServer
+	StartErr        error
+	ShutdownCalled  bool
+	ShutdownCtx     context.Context
+	ShutdownErr     error
+	TransportType   string
+}
+
+func (m *MockTransport) Start(ctx context.Context, mcpServer *server.MCPServer) error {
+	m.StartCalled = true
+	m.StartCtx = ctx
+	m.StartMCPServer = mcpServer
+	return m.StartErr
+}
+
+func (m *MockTransport) Shutdown(ctx context.Context) error {
+	m.ShutdownCalled = true
+	m.ShutdownCtx = ctx
+	return m.ShutdownErr
+}
+
+func (m *MockTransport) Type() string {
+	return m.TransportType
+}
 
 // TestNewServer tests server initialization
 func TestNewServer(t *testing.T) {
@@ -275,5 +306,183 @@ func TestConvertSections(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestNewServerCreatesTransport tests that NewServer creates a transport
+func TestNewServerCreatesTransport(t *testing.T) {
+	cfg := config.NewConfig()
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	server, err := NewServer(cfg, logger)
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+
+	if server.transport == nil {
+		t.Errorf("expected transport to be created, got nil")
+	}
+
+	// Verify the transport is of the correct type for default config (STDIO)
+	if server.transport.Type() != "stdio" {
+		t.Errorf("expected transport type 'stdio', got %q", server.transport.Type())
+	}
+}
+
+// TestNewServerWithNetworkTransport tests NewServer with SSE transport
+func TestNewServerWithNetworkTransport(t *testing.T) {
+	cfg := config.NewConfig()
+	cfg.TransportType = "sse"
+	cfg.Port = 8080
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	server, err := NewServer(cfg, logger)
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+
+	if server.transport == nil {
+		t.Errorf("expected transport to be created, got nil")
+	}
+
+	if server.transport.Type() != "sse" {
+		t.Errorf("expected transport type 'sse', got %q", server.transport.Type())
+	}
+}
+
+// TestNewServerWithInvalidTransport tests NewServer with invalid transport config
+func TestNewServerWithInvalidTransport(t *testing.T) {
+	cfg := config.NewConfig()
+	cfg.TransportType = "sse"
+	cfg.Port = 0 // Missing port for network transport
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	_, err := NewServer(cfg, logger)
+	if err == nil {
+		t.Errorf("expected error for invalid transport config, got nil")
+	}
+}
+
+// TestStartCallsTransport tests that Start calls the transport's Start method
+func TestStartCallsTransport(t *testing.T) {
+	cfg := config.NewConfig()
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	server, err := NewServer(cfg, logger)
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+
+	// Replace transport with a mock
+	mockTransport := &MockTransport{
+		TransportType: "stdio",
+		StartErr:      nil,
+	}
+	server.transport = mockTransport
+
+	// Mark server as initialized
+	server.initialized = true
+
+	ctx := context.Background()
+
+	// Call Start
+	err = server.Start(ctx)
+	if err != nil {
+		t.Errorf("unexpected error during start: %v", err)
+	}
+
+	// Verify transport.Start was called
+	if !mockTransport.StartCalled {
+		t.Errorf("expected transport.Start to be called")
+	}
+
+	if mockTransport.StartMCPServer != server.mcpServer {
+		t.Errorf("expected mcpServer to be passed to transport.Start")
+	}
+}
+
+// TestStartTransportError tests that Start returns error if transport fails
+func TestStartTransportError(t *testing.T) {
+	cfg := config.NewConfig()
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	server, err := NewServer(cfg, logger)
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+
+	// Replace transport with a mock that returns error
+	mockTransport := &MockTransport{
+		TransportType: "stdio",
+		StartErr:      fmt.Errorf("transport error"),
+	}
+	server.transport = mockTransport
+
+	// Mark server as initialized
+	server.initialized = true
+
+	ctx := context.Background()
+
+	// Call Start
+	err = server.Start(ctx)
+	if err == nil {
+		t.Errorf("expected error from transport, got nil")
+	}
+}
+
+// TestShutdownCallsTransport tests that Shutdown calls the transport's Shutdown method
+func TestShutdownCallsTransport(t *testing.T) {
+	cfg := config.NewConfig()
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	server, err := NewServer(cfg, logger)
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+
+	// Replace transport with a mock
+	mockTransport := &MockTransport{
+		TransportType: "stdio",
+		ShutdownErr:   nil,
+	}
+	server.transport = mockTransport
+
+	ctx := context.Background()
+
+	// Call Shutdown
+	err = server.Shutdown(ctx)
+	if err != nil {
+		t.Errorf("unexpected error during shutdown: %v", err)
+	}
+
+	// Verify transport.Shutdown was called
+	if !mockTransport.ShutdownCalled {
+		t.Errorf("expected transport.Shutdown to be called")
+	}
+}
+
+// TestShutdownTransportError tests that Shutdown returns error if transport fails
+func TestShutdownTransportError(t *testing.T) {
+	cfg := config.NewConfig()
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	server, err := NewServer(cfg, logger)
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+
+	// Replace transport with a mock that returns error
+	mockTransport := &MockTransport{
+		TransportType: "stdio",
+		ShutdownErr:   fmt.Errorf("shutdown error"),
+	}
+	server.transport = mockTransport
+
+	ctx := context.Background()
+
+	// Call Shutdown
+	err = server.Shutdown(ctx)
+	if err == nil {
+		t.Errorf("expected error from transport, got nil")
 	}
 }

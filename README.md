@@ -1,12 +1,15 @@
 # NATS Documentation MCP Server
 
-A Model Context Protocol (MCP) server that provides LLMs with programmatic access to NATS documentation from https://docs.nats.io/.
+A Model Context Protocol (MCP) server that provides LLMs with programmatic access to NATS documentation from https://docs.nats.io/. Optionally supports dual documentation sources including Synadia Control Plane documentation.
 
 ## Features
 
 - **MCP-compliant server** exposing documentation search and retrieval tools
-- **Fast in-memory indexing** with TF-IDF relevance ranking
+- **Dual documentation sources** - NATS documentation (always enabled) and optional Synadia Control Plane documentation
+- **Intelligent query classification** - Automatically routes queries to appropriate documentation source based on keywords
+- **Fast in-memory indexing** with TF-IDF relevance ranking and separate indices per source
 - **Session-based caching** - documentation fetched once at startup, cached for the session
+- **Graceful degradation** - If Syncp documentation fetch fails, server continues with NATS documentation only
 - **Single binary distribution** with no external dependencies
 - **Cross-platform support** - Linux, macOS, Windows on AMD64 and ARM64
 - **Structured logging** with configurable log levels
@@ -85,6 +88,67 @@ export NATS_DOCS_DOCS_URL=https://docs.nats.io
 export NATS_DOCS_FETCH_TIMEOUT=30s
 ```
 
+## Syncp (Synadia Control Plane) Documentation Support
+
+The server supports optional dual documentation sources: NATS and Synadia Control Plane. This feature is disabled by default for backward compatibility.
+
+### Enabling Syncp Support
+
+To enable Syncp documentation support, add the following to your `config.yaml`:
+
+```yaml
+syncp:
+  enabled: true
+  base_url: https://docs.synadia.com/control-plane
+  fetch_timeout: 30s
+
+classification:
+  syncp_keywords:
+    - syncp
+    - control-plane
+    - synadia
+    - namespace
+    - managed
+  nats_keywords:
+    - jetstream
+    - nats-server
+    - nats-cli
+    - subject
+    - stream
+    - consumer
+```
+
+### Query Classification
+
+When Syncp is enabled, queries are automatically classified and routed to the appropriate documentation source(s):
+
+| Query Type | Example | Behavior |
+|-----------|---------|----------|
+| NATS-specific | "jetstream consumer" | Searches NATS documentation only |
+| Syncp-specific | "control plane setup" | Searches Syncp documentation only |
+| Ambiguous | "authentication" | Searches both sources and merges results |
+
+**Classification Rules:**
+- **NATS Only**: Query contains only NATS keywords (e.g., "jetstream", "consumer")
+- **Syncp Only**: Query contains only Syncp keywords (e.g., "control-plane", "namespace")
+- **Both Sources**: Query contains keywords from both sources or no specific keywords
+- Results from both sources are merged and ranked by relevance score
+
+### Graceful Degradation
+
+If Syncp documentation fetch fails during startup:
+- The server logs a warning
+- Continues operating with NATS documentation only
+- No service disruption or error to the user
+- This ensures the server remains available even if Syncp source is temporarily unavailable
+
+### Backward Compatibility
+
+- Syncp support is **disabled by default** (`syncp.enabled: false`)
+- Existing configurations work unchanged without adding Syncp configuration
+- The default NATS-only behavior is preserved
+- No breaking changes to the MCP tool interface
+
 ## Usage
 
 ### Running the Server
@@ -119,6 +183,7 @@ Search NATS documentation by query string.
 Array of search results with:
 - `title` - Document title
 - `url` - Document URL
+- `source` - Documentation source ("NATS" or "Syncp") when dual sources enabled
 - `summary` - Brief excerpt with query context
 - `relevance` - Relevance score (0-1)
 
@@ -158,15 +223,113 @@ Add to your Claude Desktop MCP configuration (`~/Library/Application Support/Cla
 }
 ```
 
+## Transport Types
+
+The server supports multiple transport mechanisms for different deployment scenarios:
+
+### STDIO Transport (Default)
+
+The default transport using standard input/output, ideal for local process-based integrations.
+
+**Use Cases:**
+- Local development and testing
+- Claude Desktop and other local MCP clients
+- Embedded integrations where a subprocess manages I/O
+- Scenarios where the client and server run on the same machine
+
+**Configuration:**
+
+Via command line (using default):
+```bash
+./nats-docs-mcp-server --config config.yaml
+```
+
+Via environment variable:
+```bash
+export NATS_DOCS_TRANSPORT_TYPE=stdio
+./nats-docs-mcp-server
+```
+
+Via config file:
+```yaml
+transport_type: stdio
+```
+
+### SSE Transport (Server-Sent Events)
+
+HTTP-based transport using Server-Sent Events for real-time server-to-client communication.
+
+**Use Cases:**
+- Web-based clients
+- Browser integrations
+- Remote deployments
+- Multi-client scenarios with server events
+
+**Configuration:**
+
+Via command line:
+```bash
+./nats-docs-mcp-server --transport sse --host localhost --port 8080
+```
+
+Via environment variables:
+```bash
+export NATS_DOCS_TRANSPORT_TYPE=sse
+export NATS_DOCS_HOST=0.0.0.0
+export NATS_DOCS_PORT=8080
+./nats-docs-mcp-server
+```
+
+Via config file:
+```yaml
+transport_type: sse
+host: 0.0.0.0
+port: 8080
+```
+
+### StreamableHTTP Transport
+
+Full HTTP transport with request/response and SSE support for enterprise deployments.
+
+**Use Cases:**
+- Enterprise integrations
+- Full-featured HTTP API requirements
+- Load-balanced deployments
+- Complex routing scenarios
+
+**Configuration:**
+
+Via command line:
+```bash
+./nats-docs-mcp-server --transport streamablehttp --host 0.0.0.0 --port 8080
+```
+
+Via environment variables:
+```bash
+export NATS_DOCS_TRANSPORT_TYPE=streamablehttp
+export NATS_DOCS_HOST=0.0.0.0
+export NATS_DOCS_PORT=8080
+./nats-docs-mcp-server
+```
+
+Via config file:
+```yaml
+transport_type: streamablehttp
+host: 0.0.0.0
+port: 8080
+```
+
 ## Architecture
 
 ### Components
 
-- **Fetcher** - HTTP client with retry logic and rate limiting
-- **Parser** - HTML parser extracting structured content from documentation pages
-- **Index** - In-memory TF-IDF search index with thread-safe access
-- **Server** - MCP server core handling protocol communication
-- **Tools** - MCP tool handlers for search and retrieval
+- **MultiSourceFetcher** - HTTP client supporting dual documentation sources (NATS and Syncp) with shared retry logic and rate limiting
+- **Parser** - HTML parser extracting structured content from documentation pages (source-agnostic)
+- **Index Manager** - Manages separate in-memory TF-IDF search indices for NATS and Syncp documentation
+- **Classifier** - Keyword-based query classifier routing queries to appropriate documentation source(s)
+- **Search Orchestrator** - Coordinates multi-source searches based on classification and merges results
+- **Server** - MCP server core handling protocol communication and tool invocation
+- **Tools** - MCP tool handlers for search and retrieval with optional source metadata
 
 ### Caching Strategy
 
@@ -225,10 +388,12 @@ goreleaser release --snapshot --clean
 .
 ├── cmd/server/          # Main entry point
 ├── internal/
+│   ├── classifier/      # Query classification (NATS/Syncp routing)
 │   ├── config/          # Configuration management
-│   ├── fetcher/         # Documentation fetching
+│   ├── fetcher/         # Documentation fetching (dual-source support)
 │   ├── parser/          # HTML parsing
-│   ├── index/           # Search indexing
+│   ├── index/           # Search indexing and management
+│   ├── search/          # Multi-source search orchestration
 │   ├── logger/          # Structured logging
 │   └── server/          # MCP server core
 ├── .github/workflows/   # CI/CD workflows

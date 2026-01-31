@@ -1,0 +1,46 @@
+# Development Configuration
+# Enhanced logging for debugging query classification and search behavior
+
+log_level: debug
+docs_base_url: https://docs.nats.io
+fetch_timeout: 30
+max_concurrent: 5
+max_search_results: 10
+transport_type: stdio
+
+# Enable both NATS and Syncp for development
+syncp:
+  enabled: true
+  base_url: https://docs.synadia.com/control-plane
+  fetch_timeout: 30
+
+# Query classification configuration with extended keyword lists
+classification:
+  syncp_keywords:
+    - syncp
+    - control-plane
+    - synadia
+    - namespace
+    - managed
+    - system
+    - dashboard
+    - integrations
+    - account-control
+    - federation
+
+  nats_keywords:
+    - jetstream
+    - nats-server
+    - nats-cli
+    - subject
+    - stream
+    - consumer
+    - service
+    - rpc
+    - kvstore
+    - objectstore
+    - pubsub
+    - queue
+    - request-reply
+    - leaf-node
+    - gateway

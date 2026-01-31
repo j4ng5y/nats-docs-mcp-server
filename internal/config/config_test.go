@@ -37,6 +37,19 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.MaxSearchResults != 50 {
 		t.Errorf("Expected default MaxSearchResults to be 50, got %d", cfg.MaxSearchResults)
 	}
+
+	// Test transport settings
+	if cfg.TransportType != "stdio" {
+		t.Errorf("Expected default TransportType to be 'stdio', got '%s'", cfg.TransportType)
+	}
+
+	if cfg.Host != "localhost" {
+		t.Errorf("Expected default Host to be 'localhost', got '%s'", cfg.Host)
+	}
+
+	if cfg.Port != 0 {
+		t.Errorf("Expected default Port to be 0, got %d", cfg.Port)
+	}
 }
 
 // TestConfigStructFields verifies that Config struct has all required fields
@@ -103,6 +116,19 @@ func TestConfigZeroValues(t *testing.T) {
 
 	if cfg.MaxSearchResults != 0 {
 		t.Errorf("Expected zero value MaxSearchResults to be 0, got %d", cfg.MaxSearchResults)
+	}
+
+	// Transport fields should also have zero values
+	if cfg.TransportType != "" {
+		t.Errorf("Expected zero value TransportType to be empty, got '%s'", cfg.TransportType)
+	}
+
+	if cfg.Host != "" {
+		t.Errorf("Expected zero value Host to be empty, got '%s'", cfg.Host)
+	}
+
+	if cfg.Port != 0 {
+		t.Errorf("Expected zero value Port to be 0, got %d", cfg.Port)
 	}
 }
 
@@ -712,5 +738,51 @@ func TestLoadWithFlagsValidatesConfiguration(t *testing.T) {
 	_, err := LoadWithFlags("", flags)
 	if err == nil {
 		t.Error("Expected LoadWithFlags to return validation error")
+	}
+}
+
+// TestTransportFieldsExist verifies that Config struct has transport fields
+func TestTransportFieldsExist(t *testing.T) {
+	cfg := Config{
+		LogLevel:         "info",
+		DocsBaseURL:      "https://docs.nats.io",
+		FetchTimeout:     30,
+		MaxConcurrent:    5,
+		CacheDir:         "",
+		MaxSearchResults: 50,
+		TransportType:    "stdio",
+		Host:             "localhost",
+		Port:             8080,
+	}
+
+	// Verify transport fields can be set
+	if cfg.TransportType != "stdio" {
+		t.Errorf("Expected TransportType to be 'stdio', got '%s'", cfg.TransportType)
+	}
+
+	if cfg.Host != "localhost" {
+		t.Errorf("Expected Host to be 'localhost', got '%s'", cfg.Host)
+	}
+
+	if cfg.Port != 8080 {
+		t.Errorf("Expected Port to be 8080, got %d", cfg.Port)
+	}
+}
+
+// TestDefaultTransportValues verifies that NewConfig returns correct transport defaults
+func TestDefaultTransportValues(t *testing.T) {
+	cfg := NewConfig()
+
+	// Test transport defaults
+	if cfg.TransportType != "stdio" {
+		t.Errorf("Expected default TransportType to be 'stdio', got '%s'", cfg.TransportType)
+	}
+
+	if cfg.Host != "localhost" {
+		t.Errorf("Expected default Host to be 'localhost', got '%s'", cfg.Host)
+	}
+
+	if cfg.Port != 0 {
+		t.Errorf("Expected default Port to be 0, got %d", cfg.Port)
 	}
 }

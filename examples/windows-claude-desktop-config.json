@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "nats-docs": {
+      "command": "C:\\Program Files\\nats-docs\\nats-docs-mcp-server.exe",
+      "args": [
+        "--config",
+        "C:\\Users\\USERNAME\\AppData\\Local\\nats-docs\\config.yaml"
+      ],
+      "description": "NATS Documentation - search NATS and Syncp docs"
+    }
+  }
+}

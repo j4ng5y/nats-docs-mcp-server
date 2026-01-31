@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "nats-docs": {
+      "description": "NATS Documentation MCP Server",
+      "command": "/path/to/nats-docs-mcp-server",
+      "args": ["--config", "/path/to/config.yaml"],
+      "env": {
+        "NATS_DOCS_LOG_LEVEL": "info"
+      }
+    }
+  },
+  "_comment": "See examples below for different configuration options"
+}

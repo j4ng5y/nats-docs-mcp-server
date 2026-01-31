@@ -26,16 +26,19 @@ var (
 )
 
 var (
-	configFile  string
-	logLevel    string
-	showVersion bool
+	configFile    string
+	logLevel      string
+	showVersion   bool
+	transportType string
+	hostFlag      string
+	portFlag      int
 )
 
 func main() {
 	rootCmd := &cobra.Command{
 		Use:   "nats-docs-mcp-server",
 		Short: "NATS Documentation MCP Server",
-		Long: `NATS Documentation MCP Server provides LLMs with programmatic access 
+		Long: `NATS Documentation MCP Server provides LLMs with programmatic access
 to NATS documentation through the Model Context Protocol (MCP).
 
 The server exposes two main tools:
@@ -43,7 +46,27 @@ The server exposes two main tools:
   - retrieve_nats_doc: Retrieve specific documentation pages
 
 The server fetches documentation from https://docs.nats.io/ at startup
-and indexes it in memory for fast search and retrieval.`,
+and indexes it in memory for fast search and retrieval.
+
+CONFIGURATION (12-Factor App):
+The server works without any configuration file - it uses sensible defaults
+and loads configuration from environment variables. Set NATS_DOCS_* variables
+to customize behavior:
+
+  NATS_DOCS_LOG_LEVEL           Log level (debug, info, warn, error)
+  NATS_DOCS_DOCS_BASE_URL       NATS documentation URL
+  NATS_DOCS_FETCH_TIMEOUT       Fetch timeout in seconds
+  NATS_DOCS_MAX_CONCURRENT      Maximum concurrent fetches
+  NATS_DOCS_MAX_SEARCH_RESULTS  Maximum search results
+  NATS_DOCS_TRANSPORT_TYPE      Transport (stdio, sse, streamablehttp)
+  NATS_DOCS_HOST                Host for network transports
+  NATS_DOCS_PORT                Port for network transports
+  NATS_DOCS_SYNCP_ENABLED       Enable Syncp documentation (true/false)
+  NATS_DOCS_SYNCP_BASE_URL      Syncp documentation URL
+  NATS_DOCS_SYNCP_FETCH_TIMEOUT Syncp fetch timeout in seconds
+
+Command-line flags override environment variables.
+Optionally provide a config file with --config for convenience.`,
 		RunE: runServer,
 	}
 
@@ -51,6 +74,9 @@ and indexes it in memory for fast search and retrieval.`,
 	rootCmd.Flags().StringVarP(&configFile, "config", "c", "", "Path to configuration file (optional)")
 	rootCmd.Flags().StringVarP(&logLevel, "log-level", "l", "", "Log level (debug, info, warn, error)")
 	rootCmd.Flags().BoolVarP(&showVersion, "version", "v", false, "Show version information")
+	rootCmd.Flags().StringVarP(&transportType, "transport", "t", "", "Transport type (stdio, sse, streamablehttp)")
+	rootCmd.Flags().StringVar(&hostFlag, "host", "", "Host for network transports (SSE, StreamableHTTP)")
+	rootCmd.Flags().IntVarP(&portFlag, "port", "p", 0, "Port for network transports (SSE, StreamableHTTP)")
 
 	// Execute command
 	if err := rootCmd.Execute(); err != nil {
@@ -69,18 +95,19 @@ func runServer(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Load configuration
+	// Load configuration with precedence: flags > config file > environment > defaults
+	// This follows 12-factor app principles (III. Store config in environment)
 	var cfg *config.Config
 	var err error
 
 	if configFile != "" {
-		// Load from config file
+		// Load from config file if explicitly provided
 		cfg, err = config.LoadFromFile(configFile)
 		if err != nil {
 			return fmt.Errorf("failed to load configuration from file: %w", err)
 		}
 	} else {
-		// Load from environment variables and defaults
+		// Load from environment variables and defaults (no config file needed)
 		cfg, err = config.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load configuration: %w", err)
@@ -92,6 +119,22 @@ func runServer(cmd *cobra.Command, args []string) error {
 		cfg.LogLevel = logLevel
 	}
 
+	// Override transport settings from command line flags if provided
+	if transportType != "" {
+		cfg.TransportType = transportType
+	}
+	if hostFlag != "" {
+		cfg.Host = hostFlag
+	}
+	if portFlag != 0 {
+		cfg.Port = portFlag
+	}
+
+	// Validate transport configuration
+	if err := cfg.ValidateTransport(); err != nil {
+		return fmt.Errorf("invalid transport configuration: %w", err)
+	}
+
 	// Create logger
 	log, err := logger.NewLogger(cfg.LogLevel, os.Stderr)
 	if err != nil {
@@ -101,7 +144,11 @@ func runServer(cmd *cobra.Command, args []string) error {
 	log.Info("Starting NATS Documentation MCP Server",
 		"version", version,
 		"commit", commit,
-		"date", date)
+		"date", date,
+		"transport", cfg.GetTransportType())
+	if addr := cfg.GetTransportAddress(); addr != "" {
+		log.Info("Transport address", "address", addr)
+	}
 
 	// Create server
 	srv, err := server.NewServer(cfg, log)

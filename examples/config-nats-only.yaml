@@ -1,0 +1,14 @@
+# NATS Documentation Only Configuration
+# This is the recommended configuration for most users
+# Provides access to NATS documentation without Syncp support
+
+log_level: info
+docs_base_url: https://docs.nats.io
+fetch_timeout: 30
+max_concurrent: 5
+max_search_results: 10
+transport_type: stdio
+
+# Syncp support is disabled by default for backward compatibility
+syncp:
+  enabled: false

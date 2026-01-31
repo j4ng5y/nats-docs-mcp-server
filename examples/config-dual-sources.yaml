@@ -1,0 +1,41 @@
+# Dual Documentation Sources Configuration
+# Enables search across both NATS and Syncp (Synadia Control Plane) documentation
+# Queries are automatically classified and routed to appropriate source(s)
+
+log_level: info
+docs_base_url: https://docs.nats.io
+fetch_timeout: 30
+max_concurrent: 5
+max_search_results: 10
+transport_type: stdio
+
+# Enable Syncp documentation support
+syncp:
+  enabled: true
+  base_url: https://docs.synadia.com/control-plane
+  fetch_timeout: 30
+
+# Query classification configuration
+# Keywords are used to determine which documentation source(s) to search
+classification:
+  # Keywords specific to Syncp documentation
+  syncp_keywords:
+    - syncp
+    - control-plane
+    - synadia
+    - namespace
+    - managed
+    - system
+
+  # Keywords specific to NATS documentation
+  nats_keywords:
+    - jetstream
+    - nats-server
+    - nats-cli
+    - subject
+    - stream
+    - consumer
+    - service
+    - rpc
+    - kvstore
+    - objectstore

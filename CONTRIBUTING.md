@@ -90,29 +90,143 @@ This project uses property-based testing with [gopter](https://github.com/leanov
 
 **Property test requirements:**
 - Minimum 100 iterations per property test
-- Tag format: `Feature: nats-docs-mcp-server, Property {N}: {property_text}`
+- Tag format: `Feature: {feature-name}, Property {N}: {property_text}`
 - Test both success and failure cases
 - Use smart generators that constrain to valid input space
+- Document which requirements each property validates
 
 **Example property test:**
 
 ```go
-func TestPropertySearchResultCompleteness(t *testing.T) {
+// Feature: syncp-documentation-support, Property 1: Index Independence
+// VALIDATES: Requirements 2.1
+func TestProperty_IndexIndependence(t *testing.T) {
     properties := gopter.NewProperties(nil)
-    
-    properties.Property("Property 2: Search Result Completeness", 
+
+    properties.Property("NATS and Syncp indices are independent",
         prop.ForAll(
-            func(query string) bool {
-                // Test implementation
-                return true
+            func() bool {
+                // Setup dual indices
+                manager := index.NewManager()
+
+                // Index NATS docs
+                natsDoc := &index.Document{ID: "nats-1", Title: "Test", Content: "jetstream"}
+                manager.IndexNATS([]*index.Document{natsDoc})
+
+                // Index Syncp docs
+                syncpDoc := &index.Document{ID: "syncp-1", Title: "Test", Content: "control-plane"}
+                manager.IndexSyncp([]*index.Document{syncpDoc})
+
+                // Verify independence - results from each index should only contain respective docs
+                natsResults, _ := manager.GetNATSIndex().Search("jetstream", 10)
+                syncpResults, _ := manager.GetSyncpIndex().Search("control-plane", 10)
+
+                return len(natsResults) > 0 && len(syncpResults) > 0
             },
-            gen.AnyString(),
         ),
     )
-    
+
     properties.TestingRun(t, gopter.ConsoleReporter(false))
 }
 ```
+
+**Dual-Source Testing Patterns:**
+
+When testing dual-source features (Syncp support), follow these patterns:
+
+1. **Independence Testing**: Verify that NATS and Syncp components operate independently
+   ```go
+   // Each source's results should not include the other source's documents
+   // Test by checking result source metadata
+   ```
+
+2. **Classification Testing**: Verify query classification routes to correct sources
+   ```go
+   // NATS keywords → NATS source
+   // Syncp keywords → Syncp source
+   // Both/ambiguous → Both sources
+   ```
+
+3. **Merge Testing**: Verify results from multiple sources merge correctly
+   ```go
+   // Results should be sorted by relevance score across both sources
+   // Source metadata should be preserved
+   // No duplicate results should appear
+   ```
+
+4. **Graceful Degradation Testing**: Verify system continues if one source fails
+   ```go
+   // Syncp fetch failure → Continue with NATS-only
+   // NATS fetch failure → Fail (primary source)
+   ```
+
+5. **Backward Compatibility Testing**: Verify NATS-only mode still works
+   ```go
+   // With syncp.enabled = false, all features work as before
+   // No breaking changes to tool interfaces
+   // Same results as original implementation
+   ```
+
+### Testing Transport Implementations
+
+The server supports multiple transport types. When adding features or making changes, test all transport types:
+
+**Testing STDIO Transport (Default):**
+
+```bash
+# Run the server with stdio (default)
+./nats-docs-mcp-server --config config.yaml
+
+# The server reads from stdin and writes to stdout using the MCP protocol
+# Test by sending MCP requests via stdin
+```
+
+**Testing SSE Transport:**
+
+```bash
+# Start the server with SSE transport
+./nats-docs-mcp-server --transport sse --host localhost --port 8080
+
+# In another terminal, test the SSE endpoint
+curl http://localhost:8080/sse
+
+# The server will send MCP responses as Server-Sent Events
+```
+
+**Testing StreamableHTTP Transport:**
+
+```bash
+# Start the server with StreamableHTTP transport
+./nats-docs-mcp-server --transport streamablehttp --host localhost --port 8080
+
+# In another terminal, test the HTTP endpoint
+curl -X POST http://localhost:8080/messages \
+  -H "Content-Type: application/json" \
+  -d '{...mcp request...}'
+
+# The server will respond with MCP responses via HTTP and SSE
+```
+
+**Integration Testing All Transports:**
+
+```bash
+# Run integration tests
+go test -v -tags=integration ./...
+
+# This tests all transport implementations end-to-end
+```
+
+**Manual Validation Checklist:**
+
+- [ ] STDIO transport starts without flags (defaults to STDIO)
+- [ ] SSE transport starts with `--transport sse --port 8080`
+- [ ] StreamableHTTP transport starts with `--transport streamablehttp --port 8080`
+- [ ] Transport type is logged at startup
+- [ ] Transport address is logged for network transports
+- [ ] Server responds to MCP requests via each transport
+- [ ] Graceful shutdown works for all transports
+- [ ] Port conflicts are handled correctly
+- [ ] Invalid transport type returns error
 
 ### Building
 
@@ -154,7 +268,15 @@ golangci-lint run --fix
 - `cmd/server/` - Main entry point only, minimal logic
 - `internal/` - All implementation code
 - Tests co-located with source files using `_test.go` suffix
-- Property tests in separate `_property_test.go` files
+- Property tests in `_test.go` files alongside unit tests
+- Each package may have separate test files for unit and property tests
+
+**Dual-Source Package Organization:**
+- `internal/classifier/` - Query classification logic and tests
+- `internal/search/` - Multi-source search orchestration and tests
+- `internal/index/` - Dual index management and tests (Manager struct)
+- `internal/fetcher/` - MultiSourceFetcher for dual sources and tests
+- Each package includes comprehensive unit tests and property tests
 
 ### Error Handling
 
@@ -180,16 +302,19 @@ golangci-lint run --fix
 ├── cmd/
 │   └── server/          # Main entry point (main.go)
 ├── internal/
+│   ├── classifier/      # Query classification (NATS/Syncp routing)
 │   ├── config/          # Configuration management
-│   ├── fetcher/         # Documentation fetching
+│   ├── fetcher/         # Documentation fetching (dual-source support)
 │   ├── parser/          # HTML parsing
-│   ├── index/           # Search indexing (TF-IDF)
+│   ├── index/           # Search indexing and management (TF-IDF)
+│   ├── search/          # Multi-source search orchestration
 │   ├── logger/          # Structured logging
 │   └── server/          # MCP server core
 ├── .github/
 │   └── workflows/       # CI/CD workflows
 ├── .kiro/
 │   ├── specs/           # Feature specifications
+│   │   └── syncp-documentation-support/  # Syncp feature specs
 │   └── steering/        # Project guidance
 ├── .goreleaser.yaml     # Build configuration
 ├── config.example.yaml  # Example configuration
