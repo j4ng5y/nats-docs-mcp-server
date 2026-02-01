@@ -20,10 +20,12 @@ type Config struct {
 	LogLevel string // Log level: debug, info, warn, error (default: info)
 
 	// Documentation settings
-	DocsBaseURL   string // Base URL for NATS documentation (default: https://docs.nats.io)
-	FetchTimeout  int    // Timeout for fetching documentation in seconds (default: 30)
-	MaxConcurrent int    // Maximum concurrent fetches (default: 5)
-	CacheDir      string // Directory for caching fetched documentation (default: empty, no caching)
+	DocsBaseURL    string // Base URL for NATS documentation (default: https://docs.nats.io)
+	FetchTimeout   int    // Timeout for fetching documentation in seconds (default: 30)
+	MaxConcurrent  int    // Maximum concurrent fetches (default: 5)
+	CacheDir       string // Directory for caching fetched documentation (default: ~/.cache/nats-mcp)
+	CacheMaxAge    int    // Maximum age of cache in days before auto-refresh (default: 7)
+	RefreshCache   bool   // Force refresh cache on startup (default: false)
 
 	// Search settings
 	MaxSearchResults int // Maximum number of search results to return (default: 50)
@@ -33,12 +35,22 @@ type Config struct {
 	Host          string // Host to bind for network transports (default: localhost)
 	Port          int    // Port to bind for network transports (default: 0)
 
-	// Syncp documentation settings
-	SyncpEnabled      bool     // Enable Syncp documentation support (default: false)
-	SyncpBaseURL      string   // Base URL for Syncp documentation (default: https://docs.synadia.com/control-plane)
-	SyncpFetchTimeout int      // Timeout for fetching Syncp documentation in seconds (default: 30)
-	SyncpKeywords     []string // Keywords that classify queries as Syncp-specific
-	NATSKeywords      []string // Keywords that classify queries as NATS-specific
+	// Synadia documentation settings
+	SynadiaEnabled      bool     // Enable Synadia documentation support (default: false)
+	SynadiaBaseURL      string   // Base URL for Synadia documentation (default: https://docs.synadia.com)
+	SynadiaFetchTimeout int      // Timeout for fetching Synadia documentation in seconds (default: 30)
+
+	// GitHub documentation settings
+	GitHubEnabled      bool     // Enable GitHub documentation support (default: false)
+	GitHubToken        string   // GitHub Personal Access Token for authentication
+	GitHubRepositories []string // GitHub repositories to index (default: nats-io/nats-server, nats-io/nats.docs, nats-io/nats)
+	GitHubBranch       string   // Default branch to fetch from (default: main)
+	GitHubFetchTimeout int      // Timeout for fetching GitHub documentation in seconds (default: 30)
+
+	// Classification keywords
+	SynadiaKeywords []string // Keywords that classify queries as Synadia-specific
+	NATSKeywords  []string // Keywords that classify queries as NATS-specific
+	GitHubKeywords []string // Keywords that classify queries as GitHub-specific
 }
 
 // NewConfig creates a new Config with default values for all optional parameters.
@@ -54,6 +66,8 @@ func NewConfig() *Config {
 		FetchTimeout:  30,
 		MaxConcurrent: 5,
 		CacheDir:      "",
+		CacheMaxAge:   7,
+		RefreshCache:  false,
 
 		// Search defaults
 		MaxSearchResults: 50,
@@ -63,12 +77,26 @@ func NewConfig() *Config {
 		Host:          "localhost",
 		Port:          0,
 
-		// Syncp defaults
-		SyncpEnabled:      false, // Disabled by default for backward compatibility
-		SyncpBaseURL:      "https://docs.synadia.com/control-plane",
-		SyncpFetchTimeout: 30,
-		SyncpKeywords:     classifier.DefaultSyncpKeywords(),
-		NATSKeywords:      classifier.DefaultNATSKeywords(),
+		// Synadia defaults
+		SynadiaEnabled:      false, // Disabled by default for backward compatibility
+		SynadiaBaseURL:      "https://docs.synadia.com",
+		SynadiaFetchTimeout: 30,
+
+		// GitHub defaults
+		GitHubEnabled: false, // Disabled by default
+		GitHubToken:  "",
+		GitHubRepositories: []string{
+			"nats-io/nats-server",
+			"nats-io/nats.docs",
+			"nats-io/nats",
+		},
+		GitHubBranch:       "main",
+		GitHubFetchTimeout: 30,
+
+		// Classification keyword defaults
+		SynadiaKeywords:  classifier.DefaultSyadiaKeywords(),
+		NATSKeywords:   classifier.DefaultNATSKeywords(),
+		GitHubKeywords: classifier.DefaultGitHubKeywords(),
 	}
 }
 
@@ -137,21 +165,41 @@ func LoadFromFile(configPath string) (*Config, error) {
 		cfg.Port = v.GetInt("port")
 	}
 
-	// Syncp settings
-	if v.IsSet("syncp.enabled") {
-		cfg.SyncpEnabled = v.GetBool("syncp.enabled")
+	// Synadia settings
+	if v.IsSet("synadia.enabled") {
+		cfg.SynadiaEnabled = v.GetBool("synadia.enabled")
 	}
-	if v.IsSet("syncp.base_url") {
-		cfg.SyncpBaseURL = v.GetString("syncp.base_url")
+	if v.IsSet("synadia.base_url") {
+		cfg.SynadiaBaseURL = v.GetString("synadia.base_url")
 	}
-	if v.IsSet("syncp.fetch_timeout") {
-		cfg.SyncpFetchTimeout = v.GetInt("syncp.fetch_timeout")
+	if v.IsSet("synadia.fetch_timeout") {
+		cfg.SynadiaFetchTimeout = v.GetInt("synadia.fetch_timeout")
 	}
-	if v.IsSet("classification.syncp_keywords") {
-		cfg.SyncpKeywords = v.GetStringSlice("classification.syncp_keywords")
+	if v.IsSet("classification.synadia_keywords") {
+		cfg.SynadiaKeywords = v.GetStringSlice("classification.synadia_keywords")
 	}
 	if v.IsSet("classification.nats_keywords") {
 		cfg.NATSKeywords = v.GetStringSlice("classification.nats_keywords")
+	}
+	if v.IsSet("classification.github_keywords") {
+		cfg.GitHubKeywords = v.GetStringSlice("classification.github_keywords")
+	}
+
+	// GitHub settings
+	if v.IsSet("github.enabled") {
+		cfg.GitHubEnabled = v.GetBool("github.enabled")
+	}
+	if v.IsSet("github.token") {
+		cfg.GitHubToken = v.GetString("github.token")
+	}
+	if v.IsSet("github.repositories") {
+		cfg.GitHubRepositories = v.GetStringSlice("github.repositories")
+	}
+	if v.IsSet("github.default_branch") {
+		cfg.GitHubBranch = v.GetString("github.default_branch")
+	}
+	if v.IsSet("github.fetch_timeout") {
+		cfg.GitHubFetchTimeout = v.GetInt("github.fetch_timeout")
 	}
 
 	// Validate configuration
@@ -209,18 +257,18 @@ func LoadWithFlags(configPath string, flags map[string]interface{}) (*Config, er
 		if v.IsSet("port") {
 			cfg.Port = v.GetInt("port")
 		}
-		// Syncp settings
-		if v.IsSet("syncp.enabled") {
-			cfg.SyncpEnabled = v.GetBool("syncp.enabled")
+		// Synadia settings
+		if v.IsSet("synadia.enabled") {
+			cfg.SynadiaEnabled = v.GetBool("synadia.enabled")
 		}
-		if v.IsSet("syncp.base_url") {
-			cfg.SyncpBaseURL = v.GetString("syncp.base_url")
+		if v.IsSet("synadia.base_url") {
+			cfg.SynadiaBaseURL = v.GetString("synadia.base_url")
 		}
-		if v.IsSet("syncp.fetch_timeout") {
-			cfg.SyncpFetchTimeout = v.GetInt("syncp.fetch_timeout")
+		if v.IsSet("synadia.fetch_timeout") {
+			cfg.SynadiaFetchTimeout = v.GetInt("synadia.fetch_timeout")
 		}
-		if v.IsSet("classification.syncp_keywords") {
-			cfg.SyncpKeywords = v.GetStringSlice("classification.syncp_keywords")
+		if v.IsSet("classification.synadia_keywords") {
+			cfg.SynadiaKeywords = v.GetStringSlice("classification.synadia_keywords")
 		}
 		if v.IsSet("classification.nats_keywords") {
 			cfg.NATSKeywords = v.GetStringSlice("classification.nats_keywords")
@@ -274,20 +322,20 @@ func LoadWithFlags(configPath string, flags map[string]interface{}) (*Config, er
 			cfg.Port = intVal
 		}
 	}
-	// Syncp settings
-	if val, ok := flags["syncp_enabled"]; ok && val != nil {
+	// Synadia settings
+	if val, ok := flags["synadia_enabled"]; ok && val != nil {
 		if boolVal, ok := val.(bool); ok {
-			cfg.SyncpEnabled = boolVal
+			cfg.SynadiaEnabled = boolVal
 		}
 	}
-	if val, ok := flags["syncp_base_url"]; ok && val != nil {
+	if val, ok := flags["synadia_base_url"]; ok && val != nil {
 		if strVal, ok := val.(string); ok {
-			cfg.SyncpBaseURL = strVal
+			cfg.SynadiaBaseURL = strVal
 		}
 	}
-	if val, ok := flags["syncp_fetch_timeout"]; ok && val != nil {
+	if val, ok := flags["synadia_fetch_timeout"]; ok && val != nil {
 		if intVal, ok := val.(int); ok {
-			cfg.SyncpFetchTimeout = intVal
+			cfg.SynadiaFetchTimeout = intVal
 		}
 	}
 
@@ -336,6 +384,11 @@ func loadFromEnv(cfg *Config) {
 	if val := getEnv("CACHE_DIR"); val != "" {
 		cfg.CacheDir = val
 	}
+	if val := getEnv("CACHE_MAX_AGE_DAYS"); val != "" {
+		if intVal, err := strconv.Atoi(val); err == nil {
+			cfg.CacheMaxAge = intVal
+		}
+	}
 	if val := getEnv("MAX_SEARCH_RESULTS"); val != "" {
 		if intVal, err := strconv.Atoi(val); err == nil {
 			cfg.MaxSearchResults = intVal
@@ -355,25 +408,48 @@ func loadFromEnv(cfg *Config) {
 		}
 	}
 
-	// Syncp settings
-	if val := getEnv("SYNCP_ENABLED"); val != "" {
-		cfg.SyncpEnabled = val == "true" || val == "1" || val == "yes"
+	// Synadia settings
+	if val := getEnv("SYNADIA_ENABLED"); val != "" {
+		cfg.SynadiaEnabled = val == "true" || val == "1" || val == "yes"
 	}
-	if val := getEnv("SYNCP_BASE_URL"); val != "" {
-		cfg.SyncpBaseURL = val
+	if val := getEnv("SYNADIA_BASE_URL"); val != "" {
+		cfg.SynadiaBaseURL = val
 	}
-	if val := getEnv("SYNCP_FETCH_TIMEOUT"); val != "" {
+	if val := getEnv("SYNADIA_FETCH_TIMEOUT"); val != "" {
 		if intVal, err := strconv.Atoi(val); err == nil {
-			cfg.SyncpFetchTimeout = intVal
+			cfg.SynadiaFetchTimeout = intVal
+		}
+	}
+
+	// GitHub settings
+	if val := getEnv("GITHUB_ENABLED"); val != "" {
+		cfg.GitHubEnabled = val == "true" || val == "1" || val == "yes"
+	}
+	if val := getEnv("GITHUB_TOKEN"); val != "" {
+		cfg.GitHubToken = val
+	}
+	if val := getEnv("GITHUB_REPOSITORIES"); val != "" {
+		cfg.GitHubRepositories = strings.Split(val, ",")
+		// Trim whitespace from each repo
+		for i := range cfg.GitHubRepositories {
+			cfg.GitHubRepositories[i] = strings.TrimSpace(cfg.GitHubRepositories[i])
+		}
+	}
+	if val := getEnv("GITHUB_BRANCH"); val != "" {
+		cfg.GitHubBranch = val
+	}
+	if val := getEnv("GITHUB_FETCH_TIMEOUT"); val != "" {
+		if intVal, err := strconv.Atoi(val); err == nil {
+			cfg.GitHubFetchTimeout = intVal
 		}
 	}
 
 	// Classification keywords - comma-separated lists
-	if val := getEnv("SYNCP_KEYWORDS"); val != "" {
-		cfg.SyncpKeywords = strings.Split(val, ",")
+	if val := getEnv("SYNADIA_KEYWORDS"); val != "" {
+		cfg.SynadiaKeywords = strings.Split(val, ",")
 		// Trim whitespace from each keyword
-		for i := range cfg.SyncpKeywords {
-			cfg.SyncpKeywords[i] = strings.TrimSpace(cfg.SyncpKeywords[i])
+		for i := range cfg.SynadiaKeywords {
+			cfg.SynadiaKeywords[i] = strings.TrimSpace(cfg.SynadiaKeywords[i])
 		}
 	}
 	if val := getEnv("NATS_KEYWORDS"); val != "" {
@@ -381,6 +457,13 @@ func loadFromEnv(cfg *Config) {
 		// Trim whitespace from each keyword
 		for i := range cfg.NATSKeywords {
 			cfg.NATSKeywords[i] = strings.TrimSpace(cfg.NATSKeywords[i])
+		}
+	}
+	if val := getEnv("GITHUB_KEYWORDS"); val != "" {
+		cfg.GitHubKeywords = strings.Split(val, ",")
+		// Trim whitespace from each keyword
+		for i := range cfg.GitHubKeywords {
+			cfg.GitHubKeywords[i] = strings.TrimSpace(cfg.GitHubKeywords[i])
 		}
 	}
 }
@@ -502,36 +585,69 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	// Validate syncp configuration (only if enabled)
-	if c.SyncpEnabled {
-		// Validate syncp base URL
-		if c.SyncpBaseURL == "" {
-			errors = append(errors, "syncp.base_url cannot be empty when syncp is enabled")
+	// Validate synadia configuration (only if enabled)
+	if c.SynadiaEnabled {
+		// Validate synadia base URL
+		if c.SynadiaBaseURL == "" {
+			errors = append(errors, "synadia.base_url cannot be empty when synadia is enabled")
 		} else {
 			// Check if URL has valid scheme (http or https)
-			if !strings.HasPrefix(c.SyncpBaseURL, "http://") && !strings.HasPrefix(c.SyncpBaseURL, "https://") {
-				errors = append(errors, fmt.Sprintf("syncp.base_url must start with http:// or https://, got: %s", c.SyncpBaseURL))
+			if !strings.HasPrefix(c.SynadiaBaseURL, "http://") && !strings.HasPrefix(c.SynadiaBaseURL, "https://") {
+				errors = append(errors, fmt.Sprintf("synadia.base_url must start with http:// or https://, got: %s", c.SynadiaBaseURL))
 			}
 			// Basic URL validation - check for scheme and host
-			if strings.HasPrefix(c.SyncpBaseURL, "http://") && len(c.SyncpBaseURL) <= 7 {
-				errors = append(errors, fmt.Sprintf("syncp.base_url is incomplete: %s", c.SyncpBaseURL))
+			if strings.HasPrefix(c.SynadiaBaseURL, "http://") && len(c.SynadiaBaseURL) <= 7 {
+				errors = append(errors, fmt.Sprintf("synadia.base_url is incomplete: %s", c.SynadiaBaseURL))
 			}
-			if strings.HasPrefix(c.SyncpBaseURL, "https://") && len(c.SyncpBaseURL) <= 8 {
-				errors = append(errors, fmt.Sprintf("syncp.base_url is incomplete: %s", c.SyncpBaseURL))
+			if strings.HasPrefix(c.SynadiaBaseURL, "https://") && len(c.SynadiaBaseURL) <= 8 {
+				errors = append(errors, fmt.Sprintf("synadia.base_url is incomplete: %s", c.SynadiaBaseURL))
 			}
 		}
 
-		// Validate syncp fetch timeout
-		if c.SyncpFetchTimeout <= 0 {
-			errors = append(errors, fmt.Sprintf("syncp.fetch_timeout must be positive, got: %d", c.SyncpFetchTimeout))
+		// Validate synadia fetch timeout
+		if c.SynadiaFetchTimeout <= 0 {
+			errors = append(errors, fmt.Sprintf("synadia.fetch_timeout must be positive, got: %d", c.SynadiaFetchTimeout))
 		}
 
 		// Validate keyword lists are not empty
-		if len(c.SyncpKeywords) == 0 {
-			errors = append(errors, "classification.syncp_keywords cannot be empty when syncp is enabled")
+		if len(c.SynadiaKeywords) == 0 {
+			errors = append(errors, "classification.synadia_keywords cannot be empty when synadia is enabled")
 		}
 		if len(c.NATSKeywords) == 0 {
-			errors = append(errors, "classification.nats_keywords cannot be empty when syncp is enabled")
+			errors = append(errors, "classification.nats_keywords cannot be empty when synadia is enabled")
+		}
+	}
+
+	// Validate GitHub configuration (only if enabled)
+	if c.GitHubEnabled {
+		// Validate GitHub token
+		if c.GitHubToken == "" {
+			errors = append(errors, "github.token cannot be empty when GitHub is enabled")
+		}
+
+		// Validate GitHub repositories
+		if len(c.GitHubRepositories) == 0 {
+			errors = append(errors, "github.repositories cannot be empty when GitHub is enabled")
+		}
+		for _, repo := range c.GitHubRepositories {
+			if !strings.Contains(repo, "/") {
+				errors = append(errors, fmt.Sprintf("github.repositories must be in format 'owner/repo', got: %s", repo))
+			}
+		}
+
+		// Validate GitHub fetch timeout
+		if c.GitHubFetchTimeout <= 0 {
+			errors = append(errors, fmt.Sprintf("github.fetch_timeout must be positive, got: %d", c.GitHubFetchTimeout))
+		}
+
+		// Validate GitHub branch
+		if c.GitHubBranch == "" {
+			errors = append(errors, "github.default_branch cannot be empty when GitHub is enabled")
+		}
+
+		// Validate keyword list is not empty
+		if len(c.GitHubKeywords) == 0 {
+			errors = append(errors, "classification.github_keywords cannot be empty when GitHub is enabled")
 		}
 	}
 
@@ -541,4 +657,19 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+// GetCacheDir returns the cache directory, using default if not configured.
+// It expands ~ to the user's home directory and returns a sensible default
+// if the user's home directory cannot be determined.
+func (c *Config) GetCacheDir() string {
+	if c.CacheDir != "" {
+		return c.CacheDir
+	}
+	// Default: ~/.cache/nats-mcp/
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "/tmp/nats-mcp-cache"
+	}
+	return homeDir + "/.cache/nats-mcp"
 }

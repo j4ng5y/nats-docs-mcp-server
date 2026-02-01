@@ -232,17 +232,39 @@ type DocumentPage struct {
 //
 // Returns a slice of URL paths and any error encountered.
 func (df *DocumentationFetcher) DiscoverPages(ctx context.Context) ([]string, error) {
-	// Fetch the sitemap
-	sitemapPath := "/sitemap-pages.xml"
+	// Try multiple sitemap paths for compatibility with different documentation structures
+	// NATS uses /sitemap-pages.xml, Synadia uses /sitemap.xml
+	sitemapPaths := []string{"/sitemap-pages.xml", "/sitemap.xml"}
+
+	var content []byte
+	var err error
+	var sitemapPath string
+
+	// Try each sitemap path in order
+	for _, path := range sitemapPaths {
+		df.logger.Debug().
+			Str("path", path).
+			Msg("Fetching sitemap")
+
+		content, err = df.FetchPage(ctx, path)
+		if err == nil {
+			sitemapPath = path
+			break
+		}
+		// Log and continue to next path on failure
+		df.logger.Debug().
+			Str("path", path).
+			Err(err).
+			Msg("Failed to fetch sitemap, trying next path")
+	}
+
+	if content == nil {
+		return nil, fmt.Errorf("failed to fetch sitemap: tried %v, last error: %w", sitemapPaths, err)
+	}
 
 	df.logger.Debug().
 		Str("path", sitemapPath).
-		Msg("Fetching sitemap")
-
-	content, err := df.FetchPage(ctx, sitemapPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch sitemap: %w", err)
-	}
+		Msg("Successfully fetched sitemap")
 
 	// Parse the XML
 	var sitemap urlset

@@ -32,6 +32,8 @@ var (
 	transportType string
 	hostFlag      string
 	portFlag      int
+	refreshCache  bool
+	cacheMaxAge   int
 )
 
 func main() {
@@ -61,9 +63,9 @@ to customize behavior:
   NATS_DOCS_TRANSPORT_TYPE      Transport (stdio, sse, streamablehttp)
   NATS_DOCS_HOST                Host for network transports
   NATS_DOCS_PORT                Port for network transports
-  NATS_DOCS_SYNCP_ENABLED       Enable Syncp documentation (true/false)
-  NATS_DOCS_SYNCP_BASE_URL      Syncp documentation URL
-  NATS_DOCS_SYNCP_FETCH_TIMEOUT Syncp fetch timeout in seconds
+  NATS_DOCS_SYNCP_ENABLED       Enable Synadia documentation (true/false)
+  NATS_DOCS_SYNCP_BASE_URL      Synadia documentation URL
+  NATS_DOCS_SYNCP_FETCH_TIMEOUT Synadia fetch timeout in seconds
 
 Command-line flags override environment variables.
 Optionally provide a config file with --config for convenience.`,
@@ -77,6 +79,8 @@ Optionally provide a config file with --config for convenience.`,
 	rootCmd.Flags().StringVarP(&transportType, "transport", "t", "", "Transport type (stdio, sse, streamablehttp)")
 	rootCmd.Flags().StringVar(&hostFlag, "host", "", "Host for network transports (SSE, StreamableHTTP)")
 	rootCmd.Flags().IntVarP(&portFlag, "port", "p", 0, "Port for network transports (SSE, StreamableHTTP)")
+	rootCmd.Flags().BoolVar(&refreshCache, "refresh-cache", false, "Force refresh documentation cache on startup")
+	rootCmd.Flags().IntVar(&cacheMaxAge, "cache-max-age", 0, "Maximum cache age in days (0=use default)")
 
 	// Execute command
 	if err := rootCmd.Execute(); err != nil {
@@ -130,6 +134,14 @@ func runServer(cmd *cobra.Command, args []string) error {
 		cfg.Port = portFlag
 	}
 
+	// Override cache settings from command line flags if provided
+	if refreshCache {
+		cfg.RefreshCache = true
+	}
+	if cacheMaxAge > 0 {
+		cfg.CacheMaxAge = cacheMaxAge
+	}
+
 	// Validate transport configuration
 	if err := cfg.ValidateTransport(); err != nil {
 		return fmt.Errorf("invalid transport configuration: %w", err)
@@ -160,6 +172,18 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// If refresh-cache flag is set, just refresh the cache and exit
+	if refreshCache {
+		log.Info("Refreshing documentation cache...")
+		docsCount, err := srv.RefreshCache(ctx)
+		if err != nil {
+			log.Error("Cache refresh failed", "error", err)
+			return fmt.Errorf("cache refresh failed: %w", err)
+		}
+		log.Info("Cache refresh complete", "documents_cached", docsCount)
+		return nil
+	}
 
 	// Set up signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)

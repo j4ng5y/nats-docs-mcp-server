@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/j4ng5y/nats-docs-mcp-server/internal/cache"
 	"github.com/j4ng5y/nats-docs-mcp-server/internal/classifier"
 	"github.com/j4ng5y/nats-docs-mcp-server/internal/config"
 	"github.com/j4ng5y/nats-docs-mcp-server/internal/fetcher"
@@ -21,18 +22,33 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// normalizePath removes leading and trailing slashes from a path.
+// This ensures consistent document ID lookups regardless of slash usage.
+// Examples: "/nats-concepts/jetstream" -> "nats-concepts/jetstream"
+//           "nats-concepts/jetstream/" -> "nats-concepts/jetstream"
+//           "/" -> ""
+func normalizePath(p string) string {
+	p = strings.TrimLeft(p, "/")
+	p = strings.TrimRight(p, "/")
+	if p == "" {
+		return "index"
+	}
+	return p
+}
+
 // Server represents the MCP server instance with all its dependencies.
 // It coordinates the MCP protocol handling, documentation indexing, and tool execution.
-// Supports dual documentation sources (NATS and Syncp) with classification-based routing.
+// Supports dual documentation sources (NATS and Synadia) with classification-based routing.
 type Server struct {
 	config       *config.Config
-	indexManager *index.Manager           // Dual-index manager for NATS and Syncp
+	indexManager *index.Manager           // Dual-index manager for NATS and Synadia
 	orchestrator *search.Orchestrator     // Search orchestrator for multi-source search
 	classifier   classifier.Classifier    // Query classifier for routing
 	logger       *slog.Logger
 	mcpServer    *server.MCPServer
-	multiFetcher *fetcher.MultiSourceFetcher // Fetcher for both NATS and Syncp
+	multiFetcher *fetcher.MultiSourceFetcher // Fetcher for both NATS and Synadia
 	transport    TransportStarter
+	cache        *cache.Cache  // Cache for persisting documentation
 	initialized  bool
 }
 
@@ -64,26 +80,28 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		"1.0.0",
 	)
 
-	// Create index manager for dual indices (NATS and Syncp)
+	// Create index manager for multiple indices (NATS, Synadia, and GitHub)
 	indexManager := index.NewManager()
 
 	// Create classifier with configured keywords
 	queryClassifier := classifier.NewKeywordClassifier(
-		cfg.SyncpKeywords,
+		cfg.SynadiaKeywords,
 		cfg.NATSKeywords,
+		cfg.GitHubKeywords,
 	)
 
 	// Create search orchestrator
 	searchOrchestrator := search.NewOrchestrator(
 		indexManager.GetNATSIndex(),
-		indexManager.GetSyncpIndex(),
+		indexManager.GetSynadiaIndex(),
+		indexManager.GetGitHubIndex(),
 		queryClassifier,
 	)
 
 	// Create zerolog logger for fetcher (use os.Stderr for structured logging)
 	zerologLogger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
 
-	// Create multi-source fetcher for both NATS and Syncp
+	// Create multi-source fetcher for both NATS and Synadia
 	natsConfig := fetcher.FetchConfig{
 		BaseURL:       cfg.DocsBaseURL,
 		MaxRetries:    5,
@@ -91,19 +109,51 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		MaxConcurrent: cfg.MaxConcurrent,
 	}
 
-	syncpConfig := fetcher.FetchConfig{
-		BaseURL:       cfg.SyncpBaseURL,
+	syadiaConfig := fetcher.FetchConfig{
+		BaseURL:       cfg.SynadiaBaseURL,
 		MaxRetries:    5,
-		FetchTimeout:  time.Duration(cfg.SyncpFetchTimeout) * time.Second,
+		FetchTimeout:  time.Duration(cfg.SynadiaFetchTimeout) * time.Second,
 		MaxConcurrent: cfg.MaxConcurrent,
 	}
 
-	multiFetcher := fetcher.NewMultiSourceFetcher(natsConfig, syncpConfig, zerologLogger)
+	// Create GitHub fetcher config (always, for cache refresh support)
+	// The GitHubEnabled flag controls initialization on startup, but we always prepare
+	// the config so cache refresh can pull GitHub sources regardless of enable flags.
+	// A token is optional - unauthenticated requests work but have rate limits.
+	repos := make([]fetcher.GitHubRepo, len(cfg.GitHubRepositories))
+	for i, repoStr := range cfg.GitHubRepositories {
+		parts := strings.Split(repoStr, "/")
+		if len(parts) == 2 {
+			repos[i] = fetcher.GitHubRepo{
+				Owner:     parts[0],
+				Name:      parts[1],
+				Branch:    cfg.GitHubBranch,
+				ShortName: parts[1],
+			}
+		}
+	}
+	githubConfig := fetcher.GitHubFetchConfig{
+		Token:         cfg.GitHubToken,
+		Repositories:  repos,
+		MaxRetries:    5,
+		FetchTimeout:  time.Duration(cfg.GitHubFetchTimeout) * time.Second,
+		MaxConcurrent: cfg.MaxConcurrent,
+	}
+
+	multiFetcher := fetcher.NewMultiSourceFetcher(natsConfig, syadiaConfig, githubConfig, zerologLogger)
 
 	// Create transport based on configuration
 	transport, err := NewTransport(cfg, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create transport: %w", err)
+	}
+
+	// Create cache instance (best-effort, gracefully handle failures)
+	cacheDir := cfg.GetCacheDir()
+	cacheInstance, err := cache.NewCache(cacheDir, logger)
+	if err != nil {
+		logger.Warn("Failed to create cache, continuing without caching", "error", err)
+		cacheInstance = nil
 	}
 
 	return &Server{
@@ -115,13 +165,14 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		mcpServer:    mcpServer,
 		multiFetcher: multiFetcher,
 		transport:    transport,
+		cache:        cacheInstance,
 		initialized:  false,
 	}, nil
 }
 
 // Initialize performs server initialization including documentation fetching and indexing.
 // This should be called before Start() to ensure the server is ready to handle requests.
-// Fetches both NATS and Syncp documentation (if enabled) and indexes them separately.
+// Uses cached documentation if available and valid, otherwise fetches from network.
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control
@@ -134,30 +185,79 @@ func (s *Server) Initialize(ctx context.Context) error {
 
 	s.logger.Info("Starting server initialization")
 
-	// Fetch NATS documentation (always required)
-	s.logger.Info("Fetching NATS documentation", "base_url", s.config.DocsBaseURL)
-	natsPages, err := s.multiFetcher.FetchNATS(ctx)
-	if err != nil {
-		s.logger.Error("Failed to fetch NATS documentation", "error", err)
-		return fmt.Errorf("failed to fetch NATS documentation: %w", err)
+	// Initialize NATS documentation
+	if err := s.initializeNATS(ctx); err != nil {
+		return err
 	}
-	s.logger.Info("Fetched NATS documentation pages", "count", len(natsPages))
 
-	// Fetch Syncp documentation (if enabled, graceful degradation if fails)
-	var syncpPages []fetcher.DocumentPage
-	if s.config.SyncpEnabled {
-		s.logger.Info("Fetching Syncp documentation", "base_url", s.config.SyncpBaseURL)
-		syncpPages, err = s.multiFetcher.FetchSyncp(ctx)
-		if err != nil {
-			s.logger.Warn("Failed to fetch Syncp documentation, continuing with NATS only", "error", err)
-			syncpPages = []fetcher.DocumentPage{}
-		} else {
-			s.logger.Info("Fetched Syncp documentation pages", "count", len(syncpPages))
+	// Initialize Synadia documentation (if enabled)
+	if s.config.SynadiaEnabled {
+		if err := s.initializeSynadia(ctx); err != nil {
+			s.logger.Warn("Failed to initialize Synadia docs", "error", err)
+			// Continue without Synadia (graceful degradation)
 		}
 	}
 
-	// Parse and index NATS documentation
-	s.logger.Info("Parsing and indexing NATS documentation")
+	// Initialize GitHub documentation (if enabled)
+	if s.config.GitHubEnabled {
+		if err := s.initializeGitHub(ctx); err != nil {
+			s.logger.Warn("Failed to initialize GitHub docs", "error", err)
+			// Continue without GitHub (graceful degradation)
+		}
+	}
+
+	// Report index statistics
+	stats := s.indexManager.Stats()
+	s.logger.Info("Documentation indexing complete",
+		"nats_docs", stats.NATSDocCount,
+		"syncp_docs", stats.SynadiaDocCount,
+		"total_docs", stats.TotalDocCount)
+
+	s.initialized = true
+	return nil
+}
+
+// initializeNATS initializes NATS documentation, using cache if available and valid.
+func (s *Server) initializeNATS(ctx context.Context) error {
+	source := "nats"
+
+	// Check if we should use cache
+	if !s.config.RefreshCache && s.cache != nil {
+		maxAge := time.Duration(s.config.CacheMaxAge) * 24 * time.Hour
+		valid, err := s.cache.IsValid(source, maxAge)
+
+		if err != nil {
+			s.logger.Warn("Cache validation failed, will fetch from network",
+				"source", source, "error", err)
+		} else if valid {
+			// Load from cache
+			s.logger.Info("Loading NATS docs from cache", "source", source)
+			cached, err := s.cache.Load(source)
+			if err == nil && len(cached.Documents) > 0 {
+				// Import documents into index
+				if err := s.indexManager.GetNATSIndex().ImportDocuments(cached.Documents); err == nil {
+					s.logger.Info("Loaded NATS docs from cache",
+						"count", len(cached.Documents),
+						"cached_at", cached.CachedAt)
+					return nil
+				}
+				s.logger.Warn("Failed to import cached docs, will fetch", "error", err)
+			}
+		}
+	}
+
+	// Cache miss or refresh requested - fetch from network
+	s.logger.Info("Fetching NATS documentation from network",
+		"base_url", s.config.DocsBaseURL)
+
+	natsPages, err := s.multiFetcher.FetchNATS(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to fetch NATS documentation: %w", err)
+	}
+
+	s.logger.Info("Fetched NATS documentation pages", "count", len(natsPages))
+
+	// Parse and index documents
 	natsIndexDocs := make([]*index.Document, 0)
 	for _, page := range natsPages {
 		doc, err := parser.ParseHTML(strings.NewReader(string(page.Content)))
@@ -167,65 +267,267 @@ func (s *Server) Initialize(ctx context.Context) error {
 		}
 
 		indexDoc := &index.Document{
-			ID:       page.Path,
-			Title:    doc.Title,
-			URL:      s.config.DocsBaseURL + page.Path,
-			Content:  extractContent(doc),
-			Sections: convertSections(doc.Sections),
+			ID:          normalizePath(page.Path),
+			Title:       doc.Title,
+			URL:         s.config.DocsBaseURL + page.Path,
+			Content:     extractContent(doc),
+			Sections:    convertSections(doc.Sections),
+			LastUpdated: time.Now(),
 		}
 		natsIndexDocs = append(natsIndexDocs, indexDoc)
 	}
 
-	// Index NATS documents
 	if len(natsIndexDocs) == 0 {
 		return fmt.Errorf("failed to parse any NATS documentation pages")
 	}
 
 	if err := s.indexManager.IndexNATS(natsIndexDocs); err != nil {
-		s.logger.Error("Failed to index NATS documentation", "error", err)
 		return fmt.Errorf("failed to index NATS documentation: %w", err)
 	}
+
 	s.logger.Info("NATS documentation indexed", "count", len(natsIndexDocs))
 
-	// Parse and index Syncp documentation (if available)
-	if len(syncpPages) > 0 {
-		s.logger.Info("Parsing and indexing Syncp documentation")
-		syncpIndexDocs := make([]*index.Document, 0)
-		for _, page := range syncpPages {
-			doc, err := parser.ParseHTML(strings.NewReader(string(page.Content)))
-			if err != nil {
-				s.logger.Warn("Failed to parse Syncp page", "path", page.Path, "error", err)
-				continue
-			}
-
-			indexDoc := &index.Document{
-				ID:       page.Path,
-				Title:    doc.Title,
-				URL:      s.config.SyncpBaseURL + page.Path,
-				Content:  extractContent(doc),
-				Sections: convertSections(doc.Sections),
-			}
-			syncpIndexDocs = append(syncpIndexDocs, indexDoc)
+	// Save to cache (best-effort, log errors but don't fail)
+	if s.cache != nil {
+		if err := s.cache.Save(source, s.config.DocsBaseURL, natsIndexDocs); err != nil {
+			s.logger.Warn("Failed to save cache", "source", source, "error", err)
+		} else {
+			s.logger.Info("Saved NATS docs to cache", "count", len(natsIndexDocs))
 		}
+	}
 
-		if len(syncpIndexDocs) > 0 {
-			if err := s.indexManager.IndexSyncp(syncpIndexDocs); err != nil {
-				s.logger.Warn("Failed to index Syncp documentation, continuing with NATS only", "error", err)
-			} else {
-				s.logger.Info("Syncp documentation indexed", "count", len(syncpIndexDocs))
+	return nil
+}
+
+// initializeSynadia initializes Synadia documentation, using cache if available and valid.
+func (s *Server) initializeSynadia(ctx context.Context) error {
+	source := "syncp"
+
+	// Check if we should use cache
+	if !s.config.RefreshCache && s.cache != nil {
+		maxAge := time.Duration(s.config.CacheMaxAge) * 24 * time.Hour
+		valid, err := s.cache.IsValid(source, maxAge)
+
+		if err != nil {
+			s.logger.Warn("Cache validation failed, will fetch from network",
+				"source", source, "error", err)
+		} else if valid {
+			// Load from cache
+			s.logger.Info("Loading Synadia docs from cache", "source", source)
+			cached, err := s.cache.Load(source)
+			if err == nil && len(cached.Documents) > 0 {
+				// Import documents into index
+				if err := s.indexManager.GetSynadiaIndex().ImportDocuments(cached.Documents); err == nil {
+					s.logger.Info("Loaded Synadia docs from cache",
+						"count", len(cached.Documents),
+						"cached_at", cached.CachedAt)
+					return nil
+				}
+				s.logger.Warn("Failed to import cached docs, will fetch", "error", err)
 			}
 		}
 	}
 
-	// Report index statistics
-	stats := s.indexManager.Stats()
-	s.logger.Info("Documentation indexing complete",
-		"nats_docs", stats.NATSDocCount,
-		"syncp_docs", stats.SyncpDocCount,
-		"total_docs", stats.TotalDocCount)
+	// Cache miss or refresh requested - fetch from network
+	s.logger.Info("Fetching Synadia documentation from network",
+		"base_url", s.config.SynadiaBaseURL)
 
-	s.initialized = true
+	syadiaPages, err := s.multiFetcher.FetchSynadia(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to fetch Synadia documentation: %w", err)
+	}
+
+	s.logger.Info("Fetched Synadia documentation pages", "count", len(syadiaPages))
+
+	// Parse and index documents
+	syadiaIndexDocs := make([]*index.Document, 0)
+	for _, page := range syadiaPages {
+		doc, err := parser.ParseHTML(strings.NewReader(string(page.Content)))
+		if err != nil {
+			s.logger.Warn("Failed to parse Synadia page", "path", page.Path, "error", err)
+			continue
+		}
+
+		indexDoc := &index.Document{
+			ID:          normalizePath(page.Path),
+			Title:       doc.Title,
+			URL:         s.config.SynadiaBaseURL + page.Path,
+			Content:     extractContent(doc),
+			Sections:    convertSections(doc.Sections),
+			LastUpdated: time.Now(),
+		}
+		syadiaIndexDocs = append(syadiaIndexDocs, indexDoc)
+	}
+
+	if len(syadiaIndexDocs) == 0 {
+		return fmt.Errorf("failed to parse any Synadia documentation pages")
+	}
+
+	if err := s.indexManager.IndexSynadia(syadiaIndexDocs); err != nil {
+		return fmt.Errorf("failed to index Synadia documentation: %w", err)
+	}
+
+	s.logger.Info("Synadia documentation indexed", "count", len(syadiaIndexDocs))
+
+	// Save to cache (best-effort, log errors but don't fail)
+	if s.cache != nil {
+		if err := s.cache.Save(source, s.config.SynadiaBaseURL, syadiaIndexDocs); err != nil {
+			s.logger.Warn("Failed to save cache", "source", source, "error", err)
+		} else {
+			s.logger.Info("Saved Synadia docs to cache", "count", len(syadiaIndexDocs))
+		}
+	}
+
 	return nil
+}
+
+// initializeGitHub initializes GitHub documentation, using cache if available and valid.
+func (s *Server) initializeGitHub(ctx context.Context) error {
+	source := "github"
+
+	// Check if we should use cache
+	if !s.config.RefreshCache && s.cache != nil {
+		maxAge := time.Duration(s.config.CacheMaxAge) * 24 * time.Hour
+		valid, err := s.cache.IsValid(source, maxAge)
+
+		if err != nil {
+			s.logger.Warn("Cache validation failed, will fetch from network",
+				"source", source, "error", err)
+		} else if valid {
+			// Load from cache
+			s.logger.Info("Loading GitHub docs from cache", "source", source)
+			cached, err := s.cache.Load(source)
+			if err == nil && len(cached.Documents) > 0 {
+				// Import documents into index
+				if err := s.indexManager.GetGitHubIndex().ImportDocuments(cached.Documents); err == nil {
+					s.logger.Info("Loaded GitHub docs from cache",
+						"count", len(cached.Documents),
+						"cached_at", cached.CachedAt)
+					return nil
+				}
+				s.logger.Warn("Failed to import cached docs, will fetch", "error", err)
+			}
+		}
+	}
+
+	// Cache miss or refresh requested - fetch from network
+	s.logger.Info("Fetching GitHub documentation from network")
+
+	githubFiles, err := s.multiFetcher.FetchGitHub(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to fetch GitHub documentation: %w", err)
+	}
+
+	s.logger.Info("Fetched GitHub documentation files", "count", len(githubFiles))
+
+	// Parse and index documents
+	githubIndexDocs := make([]*index.Document, 0)
+	for _, file := range githubFiles {
+		doc, err := parser.ParseMarkdown(file.Content, file.Path)
+		if err != nil {
+			s.logger.Warn("Failed to parse GitHub markdown file", "path", file.Path, "error", err)
+			continue
+		}
+
+		// Build GitHub URL
+		parts := strings.Split(file.Repo, "/")
+		var owner, name string
+		if len(parts) == 2 {
+			owner = parts[0]
+			name = parts[1]
+		} else {
+			// Try to find the repo in the configured repositories
+			for _, repoStr := range s.config.GitHubRepositories {
+				repoParts := strings.Split(repoStr, "/")
+				if len(repoParts) == 2 && repoParts[1] == file.Repo {
+					owner = repoParts[0]
+					name = repoParts[1]
+					break
+				}
+			}
+		}
+
+		githubURL := fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s",
+			owner, name, s.config.GitHubBranch, file.Path)
+
+		indexDoc := &index.Document{
+			ID:          file.Repo + "/" + file.Path,
+			Title:       doc.Title,
+			URL:         githubURL,
+			Content:     extractContent(doc),
+			Sections:    convertSections(doc.Sections),
+			LastUpdated: time.Now(),
+		}
+		githubIndexDocs = append(githubIndexDocs, indexDoc)
+	}
+
+	if len(githubIndexDocs) == 0 {
+		return fmt.Errorf("failed to parse any GitHub documentation files")
+	}
+
+	if err := s.indexManager.IndexGitHub(githubIndexDocs); err != nil {
+		return fmt.Errorf("failed to index GitHub documentation: %w", err)
+	}
+
+	s.logger.Info("GitHub documentation indexed", "count", len(githubIndexDocs))
+
+	// Save to cache (best-effort, log errors but don't fail)
+	if s.cache != nil {
+		if err := s.cache.Save(source, "github", githubIndexDocs); err != nil {
+			s.logger.Warn("Failed to save cache", "source", source, "error", err)
+		} else {
+			s.logger.Info("Saved GitHub docs to cache", "count", len(githubIndexDocs))
+		}
+	}
+
+	return nil
+}
+
+// RefreshCache performs a cache refresh by clearing the cache and re-fetching documentation.
+// Unlike Initialize, this always attempts to refresh all available sources regardless of enable flags,
+// since the user is explicitly requesting a cache refresh.
+func (s *Server) RefreshCache(ctx context.Context) (int, error) {
+	if s.cache == nil {
+		return 0, fmt.Errorf("cache is not configured")
+	}
+
+	s.logger.Info("Manual cache refresh requested - pulling all documentation")
+
+	// Clear existing caches
+	if err := s.cache.ClearAll(); err != nil {
+		return 0, fmt.Errorf("failed to clear cache: %w", err)
+	}
+
+	// Reset indices
+	s.indexManager.Reset()
+
+	// Re-initialize NATS (always)
+	if err := s.initializeNATS(ctx); err != nil {
+		return 0, fmt.Errorf("failed to refresh NATS cache: %w", err)
+	}
+
+	docsRefreshed := s.indexManager.GetNATSIndex().Count()
+
+	// Re-initialize Synadia (always attempt, regardless of enable flag)
+	// This ensures all documentation is available when explicitly refreshing
+	if err := s.initializeSynadia(ctx); err != nil {
+		s.logger.Warn("Failed to refresh Synadia cache during refresh operation", "error", err)
+		// Don't fail the entire refresh, continue with other sources
+	} else {
+		docsRefreshed += s.indexManager.GetSynadiaIndex().Count()
+	}
+
+	// Re-initialize GitHub (always attempt, regardless of enable flag)
+	// This ensures all documentation is available when explicitly refreshing
+	if err := s.initializeGitHub(ctx); err != nil {
+		s.logger.Warn("Failed to refresh GitHub cache during refresh operation", "error", err)
+		// Don't fail the entire refresh, continue with other sources
+	} else {
+		docsRefreshed += s.indexManager.GetGitHubIndex().Count()
+	}
+
+	s.logger.Info("Cache refresh complete", "docs_refreshed", docsRefreshed)
+	return docsRefreshed, nil
 }
 
 // RegisterTools registers all MCP tools with the server.
@@ -265,6 +567,14 @@ func (s *Server) RegisterTools() error {
 	)
 
 	s.mcpServer.AddTool(retrieveTool, s.handleRetrieveTool)
+
+	// Register refresh_docs_cache tool
+	refreshTool := mcp.NewTool(
+		"refresh_docs_cache",
+		mcp.WithDescription("Refresh the documentation cache by fetching latest docs from source URLs. Use this to update stale documentation."),
+	)
+
+	s.mcpServer.AddTool(refreshTool, s.handleRefreshCacheTool)
 
 	s.logger.Info("MCP tools registered successfully")
 	return nil
@@ -374,7 +684,7 @@ func (s *Server) handleSearchTool(ctx context.Context, request mcp.CallToolReque
 }
 
 // handleRetrieveTool handles the retrieve_nats_doc tool invocation
-// Retrieves documents from both NATS and Syncp indices
+// Retrieves documents from both NATS and Synadia indices
 func (s *Server) handleRetrieveTool(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Extract doc_id parameter (required)
 	docID, err := request.RequireString("doc_id")
@@ -382,14 +692,21 @@ func (s *Server) handleRetrieveTool(ctx context.Context, request mcp.CallToolReq
 		return mcp.NewToolResultError("doc_id parameter is required and must be a non-empty string"), nil
 	}
 
+	// Normalize the document ID to handle leading/trailing slashes
+	normalizedID := normalizePath(docID)
+
 	// Try to retrieve from NATS index first
-	doc, err := s.indexManager.GetNATSIndex().Get(docID)
+	doc, err := s.indexManager.GetNATSIndex().Get(normalizedID)
 	if err != nil {
-		// Try Syncp index if NATS fails
-		doc, err = s.indexManager.GetSyncpIndex().Get(docID)
+		// Try Synadia index if NATS fails
+		doc, err = s.indexManager.GetSynadiaIndex().Get(normalizedID)
 		if err != nil {
-			s.logger.Warn("Document not found in any index", "doc_id", docID)
-			return mcp.NewToolResultError(fmt.Sprintf("document not found: %s", docID)), nil
+			// Try GitHub index if Synadia fails
+			doc, err = s.indexManager.GetGitHubIndex().Get(normalizedID)
+			if err != nil {
+				s.logger.Warn("Document not found in any index", "doc_id", docID, "normalized_id", normalizedID)
+				return mcp.NewToolResultError(fmt.Sprintf("document not found: %s", docID)), nil
+			}
 		}
 	}
 
@@ -407,4 +724,22 @@ func (s *Server) handleRetrieveTool(ctx context.Context, request mcp.CallToolReq
 	s.logger.Info("Document retrieved", "doc_id", docID, "title", doc.Title)
 
 	return mcp.NewToolResultText(content.String()), nil
+}
+
+// handleRefreshCacheTool handles requests to refresh the documentation cache.
+func (s *Server) handleRefreshCacheTool(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Perform cache refresh
+	docsRefreshed, err := s.RefreshCache(ctx)
+	if err != nil {
+		s.logger.Error("Cache refresh failed", "error", err)
+		return mcp.NewToolResultError(fmt.Sprintf("cache refresh failed: %v", err)), nil
+	}
+
+	message := fmt.Sprintf("Successfully refreshed documentation cache\n")
+	message += fmt.Sprintf("Documents refreshed: %d\n", docsRefreshed)
+	if s.cache != nil {
+		message += fmt.Sprintf("Cache location: %s\n", s.config.GetCacheDir())
+	}
+
+	return mcp.NewToolResultText(message), nil
 }

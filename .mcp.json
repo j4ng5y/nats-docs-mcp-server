@@ -1,8 +1,7 @@
 {
   "mcpServers": {
     "nats-docs": {
-      "command": "/path/to/nats-docs-mcp-server",
-      "args": ["--config", "/path/to/config.yaml"],
+      "command": "/home/jgregory/Development/go/src/github.com/j4ng5y/nats-mcp/dist/nats-docs-mcp-server_linux_amd64_v1/nats-docs-mcp-server",
       "description": "NATS Documentation MCP Server - provides access to NATS and Syncp documentation",
       "env": {
         "NATS_DOCS_LOG_LEVEL": "info"

@@ -11,10 +11,12 @@ type DocumentationSource int
 const (
 	// SourceNATS indicates the query is specific to NATS documentation
 	SourceNATS DocumentationSource = iota
-	// SourceSyncp indicates the query is specific to Syncp documentation
-	SourceSyncp
-	// SourceBoth indicates the query should search both NATS and Syncp documentation
-	SourceBoth
+	// SourceSynadia indicates the query is specific to Synadia documentation
+	SourceSynadia
+	// SourceGitHub indicates the query is specific to GitHub documentation
+	SourceGitHub
+	// SourceAll indicates the query should search all documentation sources
+	SourceAll
 )
 
 // String returns the string representation of the DocumentationSource
@@ -22,10 +24,12 @@ func (ds DocumentationSource) String() string {
 	switch ds {
 	case SourceNATS:
 		return "NATS"
-	case SourceSyncp:
-		return "Syncp"
-	case SourceBoth:
-		return "Both"
+	case SourceSynadia:
+		return "Synadia"
+	case SourceGitHub:
+		return "GitHub"
+	case SourceAll:
+		return "All"
 	default:
 		return "Unknown"
 	}
@@ -39,25 +43,32 @@ type Classifier interface {
 
 // KeywordClassifier implements classification using keyword matching
 type KeywordClassifier struct {
-	syncpKeywords map[string]bool
-	natsKeywords  map[string]bool
+	syadiaKeywords map[string]bool
+	natsKeywords   map[string]bool
+	githubKeywords map[string]bool
 }
 
 // NewKeywordClassifier creates a classifier with the given keyword lists
-func NewKeywordClassifier(syncpKeywords, natsKeywords []string) *KeywordClassifier {
+func NewKeywordClassifier(syadiaKeywords, natsKeywords []string, githubKeywords []string) *KeywordClassifier {
 	kc := &KeywordClassifier{
-		syncpKeywords: make(map[string]bool),
-		natsKeywords:  make(map[string]bool),
+		syadiaKeywords: make(map[string]bool),
+		natsKeywords:   make(map[string]bool),
+		githubKeywords: make(map[string]bool),
 	}
 
-	// Normalize and store syncp keywords
-	for _, kw := range syncpKeywords {
-		kc.syncpKeywords[strings.ToLower(kw)] = true
+	// Normalize and store Synadia keywords
+	for _, kw := range syadiaKeywords {
+		kc.syadiaKeywords[strings.ToLower(kw)] = true
 	}
 
 	// Normalize and store NATS keywords
 	for _, kw := range natsKeywords {
 		kc.natsKeywords[strings.ToLower(kw)] = true
+	}
+
+	// Normalize and store GitHub keywords
+	for _, kw := range githubKeywords {
+		kc.githubKeywords[strings.ToLower(kw)] = true
 	}
 
 	return kc
@@ -67,28 +78,27 @@ func NewKeywordClassifier(syncpKeywords, natsKeywords []string) *KeywordClassifi
 // Classification algorithm:
 // 1. Normalize query to lowercase
 // 2. Check if keywords appear in the query (substring or word matching)
-// 3. Count matches against syncp keyword list
-// 4. Count matches against NATS keyword list
-// 5. Apply classification rules:
-//    - If syncp matches > 0 AND nats matches == 0 → SourceSyncp
-//    - If nats matches > 0 AND syncp matches == 0 → SourceNATS
-//    - If both have matches OR both have zero matches → SourceBoth
+// 3. Count matches against Synadia, NATS, and GitHub keyword lists
+// 4. Apply classification rules:
+//    - If only one source has matches → Return that source
+//    - If multiple sources have matches OR no matches → Return SourceAll
 func (kc *KeywordClassifier) Classify(query string) DocumentationSource {
 	if query == "" {
-		return SourceBoth
+		return SourceAll
 	}
 
 	// Normalize to lowercase
 	normalizedQuery := strings.ToLower(query)
 
 	// Count matches by checking if keywords appear in the query
-	syncpMatches := 0
+	syadiaMatches := 0
 	natsMatches := 0
+	githubMatches := 0
 
-	// Check syncp keywords
-	for kw := range kc.syncpKeywords {
+	// Check Synadia keywords
+	for kw := range kc.syadiaKeywords {
 		if matchesKeywordInQuery(normalizedQuery, kw) {
-			syncpMatches++
+			syadiaMatches++
 		}
 	}
 
@@ -99,20 +109,45 @@ func (kc *KeywordClassifier) Classify(query string) DocumentationSource {
 		}
 	}
 
-	// If no keywords matched at all, default to SourceBoth
-	if syncpMatches == 0 && natsMatches == 0 {
-		return SourceBoth
+	// Check GitHub keywords
+	for kw := range kc.githubKeywords {
+		if matchesKeywordInQuery(normalizedQuery, kw) {
+			githubMatches++
+		}
 	}
 
-	// Apply classification rules
-	if syncpMatches > 0 && natsMatches == 0 {
-		return SourceSyncp
+	// Count how many sources have matches
+	matchCount := 0
+	if syadiaMatches > 0 {
+		matchCount++
 	}
-	if natsMatches > 0 && syncpMatches == 0 {
-		return SourceNATS
+	if natsMatches > 0 {
+		matchCount++
 	}
-	// Both have matches OR both have zero matches
-	return SourceBoth
+	if githubMatches > 0 {
+		matchCount++
+	}
+
+	// If no keywords matched at all, default to SourceAll
+	if matchCount == 0 {
+		return SourceAll
+	}
+
+	// If exactly one source matched, return that source
+	if matchCount == 1 {
+		if syadiaMatches > 0 {
+			return SourceSynadia
+		}
+		if natsMatches > 0 {
+			return SourceNATS
+		}
+		if githubMatches > 0 {
+			return SourceGitHub
+		}
+	}
+
+	// Multiple sources matched or ambiguous - search all
+	return SourceAll
 }
 
 // matchesKeywordInQuery checks if a keyword appears in the query with word boundaries.
@@ -186,12 +221,11 @@ func tokenizeQuery(query string) []string {
 	return words
 }
 
-// DefaultSyncpKeywords returns the default list of Syncp-specific keywords
-func DefaultSyncpKeywords() []string {
+// DefaultSyadiaKeywords returns the default list of Synadia-specific keywords
+func DefaultSyadiaKeywords() []string {
 	return []string{
 		"control-plane",
-		"syncp",
-		"syn-cp",
+		"synadia",
 		"synadia platform",
 		"control plane",
 		"platform",
@@ -220,5 +254,25 @@ func DefaultNATSKeywords() []string {
 		"nats-server",
 		"nats.go",
 		"nats.js",
+	}
+}
+
+// DefaultGitHubKeywords returns the default list of GitHub-specific keywords
+func DefaultGitHubKeywords() []string {
+	return []string{
+		"server",
+		"implementation",
+		"code",
+		"go",
+		"golang",
+		"client",
+		"example",
+		"tutorial",
+		"source",
+		"repository",
+		"readme",
+		"github",
+		"sdk",
+		"library",
 	}
 }

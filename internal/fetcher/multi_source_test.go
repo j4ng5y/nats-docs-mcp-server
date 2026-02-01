@@ -21,14 +21,23 @@ func TestNewMultiSourceFetcher(t *testing.T) {
 		FetchTimeout:  30 * time.Second,
 		MaxConcurrent: 5,
 	}
-	syncpConfig := FetchConfig{
+	SynadiaConfig := FetchConfig{
 		BaseURL:       "https://docs.synadia.com/control-plane",
 		MaxRetries:    5,
 		FetchTimeout:  30 * time.Second,
 		MaxConcurrent: 5,
 	}
+	githubConfig := GitHubFetchConfig{
+		Token: "test-token",
+		Repositories: []GitHubRepo{
+			{Owner: "nats-io", Name: "nats-server", Branch: "main", ShortName: "nats-server"},
+		},
+		MaxRetries:    5,
+		FetchTimeout:  30,
+		MaxConcurrent: 5,
+	}
 
-	fetcher := NewMultiSourceFetcher(natsConfig, syncpConfig, logger)
+	fetcher := NewMultiSourceFetcher(natsConfig, SynadiaConfig, githubConfig, logger)
 
 	if fetcher == nil {
 		t.Fatal("NewMultiSourceFetcher returned nil")
@@ -38,8 +47,12 @@ func TestNewMultiSourceFetcher(t *testing.T) {
 		t.Fatal("NATS fetcher is nil")
 	}
 
-	if fetcher.syncpFetcher == nil {
-		t.Fatal("Syncp fetcher is nil")
+	if fetcher.syadiaFetcher == nil {
+		t.Fatal("Synadia fetcher is nil")
+	}
+
+	if fetcher.githubFetcher == nil {
+		t.Fatal("GitHub fetcher is nil")
 	}
 }
 
@@ -52,14 +65,23 @@ func TestFetchNATS_WithMockServer(t *testing.T) {
 		FetchTimeout:  5 * time.Second,
 		MaxConcurrent: 1,
 	}
-	syncpConfig := FetchConfig{
+	SynadiaConfig := FetchConfig{
 		BaseURL:       "https://docs.synadia.com/control-plane",
 		MaxRetries:    1,
 		FetchTimeout:  5 * time.Second,
 		MaxConcurrent: 1,
 	}
+	githubConfig := GitHubFetchConfig{
+		Token: "test-token",
+		Repositories: []GitHubRepo{
+			{Owner: "nats-io", Name: "nats-server", Branch: "main", ShortName: "nats-server"},
+		},
+		MaxRetries:    1,
+		FetchTimeout:  5,
+		MaxConcurrent: 1,
+	}
 
-	fetcher := NewMultiSourceFetcher(natsConfig, syncpConfig, logger)
+	fetcher := NewMultiSourceFetcher(natsConfig, SynadiaConfig, githubConfig, logger)
 
 	if fetcher == nil {
 		t.Fatal("fetcher creation failed")
@@ -70,8 +92,8 @@ func TestFetchNATS_WithMockServer(t *testing.T) {
 		t.Errorf("expected base URL %s, got %s", natsConfig.BaseURL, fetcher.natsFetcher.baseURL)
 	}
 
-	if fetcher.syncpFetcher.baseURL != syncpConfig.BaseURL {
-		t.Errorf("expected base URL %s, got %s", syncpConfig.BaseURL, fetcher.syncpFetcher.baseURL)
+	if fetcher.syadiaFetcher.baseURL != SynadiaConfig.BaseURL {
+		t.Errorf("expected base URL %s, got %s", SynadiaConfig.BaseURL, fetcher.syadiaFetcher.baseURL)
 	}
 }
 
@@ -152,7 +174,7 @@ func TestFetchConfig_Validation(t *testing.T) {
 // Property-Based Tests
 // ============================================================================
 
-// Feature: syncp-documentation-support, Property 13: Retry Logic Consistency
+// Feature: Synadia-documentation-support, Property 13: Retry Logic Consistency
 // VALIDATES: Requirements 1.2
 func TestProperty_RetryLogicConsistency(t *testing.T) {
 	properties := gopter.NewProperties(nil)
@@ -160,7 +182,7 @@ func TestProperty_RetryLogicConsistency(t *testing.T) {
 	logger := zerolog.New(nil)
 
 	properties.Property(
-		"NATS and Syncp configs support same retry behavior",
+		"NATS and Synadia configs support same retry behavior",
 		prop.ForAll(
 			func() bool {
 				natsConfig := FetchConfig{
@@ -169,26 +191,35 @@ func TestProperty_RetryLogicConsistency(t *testing.T) {
 					FetchTimeout:  30 * time.Second,
 					MaxConcurrent: 5,
 				}
-				syncpConfig := FetchConfig{
+				SynadiaConfig := FetchConfig{
 					BaseURL:       "https://docs.synadia.com/control-plane",
 					MaxRetries:    5,
 					FetchTimeout:  30 * time.Second,
 					MaxConcurrent: 5,
 				}
+				githubConfig := GitHubFetchConfig{
+					Token: "test-token",
+					Repositories: []GitHubRepo{
+						{Owner: "nats-io", Name: "nats-server", Branch: "main", ShortName: "nats-server"},
+					},
+					MaxRetries:    5,
+					FetchTimeout:  30,
+					MaxConcurrent: 5,
+				}
 
-				fetcher := NewMultiSourceFetcher(natsConfig, syncpConfig, logger)
+				fetcher := NewMultiSourceFetcher(natsConfig, SynadiaConfig, githubConfig, logger)
 
 				// Both fetchers should share the same HTTP client
 				// and thus the same retry logic
 				if fetcher.natsFetcher.client == nil {
 					return false
 				}
-				if fetcher.syncpFetcher.client == nil {
+				if fetcher.syadiaFetcher.client == nil {
 					return false
 				}
 
 				// Both should use same client instance
-				if fetcher.natsFetcher.client != fetcher.syncpFetcher.client {
+				if fetcher.natsFetcher.client != fetcher.syadiaFetcher.client {
 					return false
 				}
 
@@ -213,20 +244,29 @@ func TestProperty_RetryLogicConsistency(t *testing.T) {
 					FetchTimeout:  timeout,
 					MaxConcurrent: 5,
 				}
-				syncpConfig := FetchConfig{
+				SynadiaConfig := FetchConfig{
 					BaseURL:       "https://docs.synadia.com/control-plane",
 					MaxRetries:    5,
 					FetchTimeout:  timeout,
 					MaxConcurrent: 5,
 				}
+				githubConfig := GitHubFetchConfig{
+					Token: "test-token",
+					Repositories: []GitHubRepo{
+						{Owner: "nats-io", Name: "nats-server", Branch: "main", ShortName: "nats-server"},
+					},
+					MaxRetries:    5,
+					FetchTimeout:  30,
+					MaxConcurrent: 5,
+				}
 
-				fetcher := NewMultiSourceFetcher(natsConfig, syncpConfig, logger)
+				fetcher := NewMultiSourceFetcher(natsConfig, SynadiaConfig, githubConfig, logger)
 
 				// Both fetchers should have HTTP clients with same timeout
 				natsTimeout := fetcher.natsFetcher.client.client.Timeout
-				syncpTimeout := fetcher.syncpFetcher.client.client.Timeout
+				SynadiaTimeout := fetcher.syadiaFetcher.client.client.Timeout
 
-				return natsTimeout == syncpTimeout && natsTimeout == timeout
+				return natsTimeout == SynadiaTimeout && natsTimeout == timeout
 			},
 		),
 	)
@@ -234,7 +274,7 @@ func TestProperty_RetryLogicConsistency(t *testing.T) {
 	properties.TestingRun(t, gopter.ConsoleReporter(false))
 }
 
-// Feature: syncp-documentation-support, Property 1: Index Independence (for fetcher)
+// Feature: Synadia-documentation-support, Property 1: Index Independence (for fetcher)
 // VALIDATES: Requirements 1.1, 1.3
 func TestProperty_FetcherIndependence(t *testing.T) {
 	properties := gopter.NewProperties(nil)
@@ -242,7 +282,7 @@ func TestProperty_FetcherIndependence(t *testing.T) {
 	logger := zerolog.New(nil)
 
 	properties.Property(
-		"NATS and Syncp fetchers operate independently",
+		"NATS and Synadia fetchers operate independently",
 		prop.ForAll(
 			func() bool {
 				natsConfig := FetchConfig{
@@ -251,17 +291,26 @@ func TestProperty_FetcherIndependence(t *testing.T) {
 					FetchTimeout:  15 * time.Second,
 					MaxConcurrent: 3,
 				}
-				syncpConfig := FetchConfig{
+				SynadiaConfig := FetchConfig{
 					BaseURL:       "https://docs.synadia.com/control-plane",
 					MaxRetries:    3,
 					FetchTimeout:  15 * time.Second,
 					MaxConcurrent: 3,
 				}
+				githubConfig := GitHubFetchConfig{
+					Token: "test-token",
+					Repositories: []GitHubRepo{
+						{Owner: "nats-io", Name: "nats-server", Branch: "main", ShortName: "nats-server"},
+					},
+					MaxRetries:    3,
+					FetchTimeout:  15,
+					MaxConcurrent: 3,
+				}
 
-				fetcher := NewMultiSourceFetcher(natsConfig, syncpConfig, logger)
+				fetcher := NewMultiSourceFetcher(natsConfig, SynadiaConfig, githubConfig, logger)
 
 				// Base URLs should be different
-				if fetcher.natsFetcher.baseURL == fetcher.syncpFetcher.baseURL {
+				if fetcher.natsFetcher.baseURL == fetcher.syadiaFetcher.baseURL {
 					return false
 				}
 
@@ -270,8 +319,8 @@ func TestProperty_FetcherIndependence(t *testing.T) {
 					return false
 				}
 
-				// Syncp should have correct URL
-				if fetcher.syncpFetcher.baseURL != syncpConfig.BaseURL {
+				// Synadia should have correct URL
+				if fetcher.syadiaFetcher.baseURL != SynadiaConfig.BaseURL {
 					return false
 				}
 
@@ -283,7 +332,7 @@ func TestProperty_FetcherIndependence(t *testing.T) {
 	properties.TestingRun(t, gopter.ConsoleReporter(false))
 }
 
-// Feature: syncp-documentation-support, Property 10: Backward Compatibility
+// Feature: Synadia-documentation-support, Property 10: Backward Compatibility
 // VALIDATES: Requirements 5.2, 6.3
 func TestProperty_BackwardCompatibility_Fetcher(t *testing.T) {
 	properties := gopter.NewProperties(nil)
@@ -291,7 +340,7 @@ func TestProperty_BackwardCompatibility_Fetcher(t *testing.T) {
 	logger := zerolog.New(nil)
 
 	properties.Property(
-		"NATS-only fetching works without Syncp config",
+		"NATS-only fetching works without Synadia config",
 		prop.ForAll(
 			func() bool {
 				natsConfig := FetchConfig{
@@ -300,14 +349,23 @@ func TestProperty_BackwardCompatibility_Fetcher(t *testing.T) {
 					FetchTimeout:  30 * time.Second,
 					MaxConcurrent: 5,
 				}
-				syncpConfig := FetchConfig{
+				SynadiaConfig := FetchConfig{
 					BaseURL:       "https://docs.synadia.com/control-plane",
 					MaxRetries:    5,
 					FetchTimeout:  30 * time.Second,
 					MaxConcurrent: 5,
 				}
+				githubConfig := GitHubFetchConfig{
+					Token: "test-token",
+					Repositories: []GitHubRepo{
+						{Owner: "nats-io", Name: "nats-server", Branch: "main", ShortName: "nats-server"},
+					},
+					MaxRetries:    5,
+					FetchTimeout:  30,
+					MaxConcurrent: 5,
+				}
 
-				fetcher := NewMultiSourceFetcher(natsConfig, syncpConfig, logger)
+				fetcher := NewMultiSourceFetcher(natsConfig, SynadiaConfig, githubConfig, logger)
 
 				// NATS fetcher should be usable independently
 				if fetcher.natsFetcher == nil {

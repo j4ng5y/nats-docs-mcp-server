@@ -147,6 +147,60 @@ func TestStart(t *testing.T) {
 	}
 }
 
+// TestNormalizePath tests document ID normalization
+func TestNormalizePath(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "path with leading slash",
+			input:    "/nats-concepts/jetstream",
+			expected: "nats-concepts/jetstream",
+		},
+		{
+			name:     "path with trailing slash",
+			input:    "nats-concepts/jetstream/",
+			expected: "nats-concepts/jetstream",
+		},
+		{
+			name:     "path with both leading and trailing slashes",
+			input:    "/nats-concepts/jetstream/",
+			expected: "nats-concepts/jetstream",
+		},
+		{
+			name:     "path without slashes",
+			input:    "nats-concepts/jetstream",
+			expected: "nats-concepts/jetstream",
+		},
+		{
+			name:     "just leading slash",
+			input:    "/",
+			expected: "index",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "index",
+		},
+		{
+			name:     "multiple slashes",
+			input:    "//nats-concepts/jetstream//",
+			expected: "nats-concepts/jetstream",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := normalizePath(tt.input)
+			if result != tt.expected {
+				t.Errorf("normalizePath(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
 // TestShutdown tests server shutdown
 func TestShutdown(t *testing.T) {
 	cfg := config.NewConfig()

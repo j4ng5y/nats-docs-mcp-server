@@ -14,19 +14,19 @@ import (
 
 // Document represents a single documentation page with all its content and metadata.
 type Document struct {
-	ID          string    // Unique identifier (typically URL path)
-	Title       string    // Document title
-	URL         string    // Full URL to the documentation page
-	Content     string    // Full text content
-	Sections    []Section // Subsections within the document
-	LastUpdated time.Time // When the document was last fetched/updated
+	ID          string    `json:"id"`            // Unique identifier (typically URL path)
+	Title       string    `json:"title"`         // Document title
+	URL         string    `json:"url"`           // Full URL to the documentation page
+	Content     string    `json:"content"`       // Full text content
+	Sections    []Section `json:"sections"`      // Subsections within the document
+	LastUpdated time.Time `json:"last_updated"` // When the document was last fetched/updated
 }
 
 // Section represents a subsection within a document with its own heading and content.
 type Section struct {
-	Heading string // Section heading text
-	Content string // Section content
-	Level   int    // Heading level (1-6 for h1-h6)
+	Heading string `json:"heading"` // Section heading text
+	Content string `json:"content"` // Section content
+	Level   int    `json:"level"`   // Heading level (1-6 for h1-h6)
 }
 
 // DocumentStore provides thread-safe storage for documents with concurrent read access.
@@ -417,6 +417,55 @@ func (di *DocumentationIndex) Count() int {
 	defer di.mu.RUnlock()
 
 	return di.store.Count()
+}
+
+// ExportDocuments returns all documents in the index for caching purposes.
+// This exports the raw documents without the search index structure.
+func (di *DocumentationIndex) ExportDocuments() []*Document {
+	di.mu.RLock()
+	defer di.mu.RUnlock()
+
+	return di.store.GetAllDocuments()
+}
+
+// ImportDocuments re-indexes documents from cache by adding them to the index.
+// This rebuilds the TF-IDF search index from the provided documents.
+func (di *DocumentationIndex) ImportDocuments(docs []*Document) error {
+	if docs == nil {
+		return fmt.Errorf("documents cannot be nil")
+	}
+
+	di.mu.Lock()
+	defer di.mu.Unlock()
+
+	for _, doc := range docs {
+		if doc == nil {
+			continue
+		}
+		if doc.ID == "" {
+			return fmt.Errorf("document ID cannot be empty")
+		}
+
+		// Add document to store
+		if err := di.store.AddDocument(doc); err != nil {
+			return fmt.Errorf("failed to store document %s: %w", doc.ID, err)
+		}
+
+		// Build searchable content from title and content
+		searchableContent := doc.Title + " " + doc.Content
+
+		// Add sections to searchable content
+		for _, section := range doc.Sections {
+			searchableContent += " " + section.Heading + " " + section.Content
+		}
+
+		// Index the content for searching
+		if err := di.searchIndex.AddDocument(doc.ID, searchableContent); err != nil {
+			return fmt.Errorf("failed to index document %s: %w", doc.ID, err)
+		}
+	}
+
+	return nil
 }
 
 // generateSummary creates a brief summary of content, preferring text around query terms.

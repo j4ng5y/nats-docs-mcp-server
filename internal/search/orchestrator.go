@@ -14,27 +14,30 @@ type SearchResult struct {
 	URL         string  // Document URL
 	Snippet     string  // Relevant excerpt from the document
 	Score       float64 // TF-IDF relevance score
-	Source      string  // "NATS" or "Syncp" indicating documentation source
+	Source      string  // "NATS" or "Synadia" indicating documentation source
 	DocumentID  string  // Internal document identifier
 }
 
 // Orchestrator coordinates searches across multiple documentation sources
 type Orchestrator struct {
-	natsIndex  *index.DocumentationIndex
-	syncpIndex *index.DocumentationIndex
-	classifier classifier.Classifier
+	natsIndex   *index.DocumentationIndex
+	syadiaIndex  *index.DocumentationIndex
+	githubIndex *index.DocumentationIndex
+	classifier  classifier.Classifier
 }
 
-// NewOrchestrator creates a search orchestrator with dual indices and classifier
+// NewOrchestrator creates a search orchestrator with multiple indices and classifier
 func NewOrchestrator(
 	natsIdx *index.DocumentationIndex,
 	syncpIdx *index.DocumentationIndex,
+	githubIdx *index.DocumentationIndex,
 	clf classifier.Classifier,
 ) *Orchestrator {
 	return &Orchestrator{
-		natsIndex:  natsIdx,
-		syncpIndex: syncpIdx,
-		classifier: clf,
+		natsIndex:   natsIdx,
+		syadiaIndex:  syncpIdx,
+		githubIndex: githubIdx,
+		classifier:  clf,
 	}
 }
 
@@ -57,10 +60,12 @@ func (o *Orchestrator) Search(query string, maxResults int) ([]SearchResult, err
 	switch source {
 	case classifier.SourceNATS:
 		return o.searchNATSIndex(query, maxResults)
-	case classifier.SourceSyncp:
-		return o.searchSyncpIndex(query, maxResults)
-	case classifier.SourceBoth:
-		return o.searchBothIndices(query, maxResults)
+	case classifier.SourceSynadia:
+		return o.searchSynadiaIndex(query, maxResults)
+	case classifier.SourceGitHub:
+		return o.searchGitHubIndex(query, maxResults)
+	case classifier.SourceAll:
+		return o.searchAllIndices(query, maxResults)
 	default:
 		return nil, fmt.Errorf("unknown documentation source: %v", source)
 	}
@@ -83,10 +88,12 @@ func (o *Orchestrator) SearchSource(
 	switch source {
 	case classifier.SourceNATS:
 		return o.searchNATSIndex(query, maxResults)
-	case classifier.SourceSyncp:
-		return o.searchSyncpIndex(query, maxResults)
-	case classifier.SourceBoth:
-		return o.searchBothIndices(query, maxResults)
+	case classifier.SourceSynadia:
+		return o.searchSynadiaIndex(query, maxResults)
+	case classifier.SourceGitHub:
+		return o.searchGitHubIndex(query, maxResults)
+	case classifier.SourceAll:
+		return o.searchAllIndices(query, maxResults)
 	default:
 		return nil, fmt.Errorf("unknown documentation source: %v", source)
 	}
@@ -115,9 +122,9 @@ func (o *Orchestrator) searchNATSIndex(query string, maxResults int) ([]SearchRe
 	return results, nil
 }
 
-// searchSyncpIndex performs a search on the syncp index only
-func (o *Orchestrator) searchSyncpIndex(query string, maxResults int) ([]SearchResult, error) {
-	syncpResults, err := o.syncpIndex.Search(query, maxResults)
+// searchSynadiaIndex performs a search on the syncp index only
+func (o *Orchestrator) searchSynadiaIndex(query string, maxResults int) ([]SearchResult, error) {
+	syncpResults, err := o.syadiaIndex.Search(query, maxResults)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search syncp index: %w", err)
 	}
@@ -130,7 +137,7 @@ func (o *Orchestrator) searchSyncpIndex(query string, maxResults int) ([]SearchR
 			URL:         indexResult.URL,
 			Snippet:     indexResult.Summary,
 			Score:       indexResult.Relevance,
-			Source:      "Syncp",
+			Source:      "Synadia",
 			DocumentID:  indexResult.DocumentID,
 		}
 	}
@@ -138,19 +145,43 @@ func (o *Orchestrator) searchSyncpIndex(query string, maxResults int) ([]SearchR
 	return results, nil
 }
 
-// searchBothIndices performs searches on both indices and merges results
-func (o *Orchestrator) searchBothIndices(query string, maxResults int) ([]SearchResult, error) {
-	// Search both indices (without applying limit to individual searches)
+// searchGitHubIndex performs a search on the GitHub index only
+func (o *Orchestrator) searchGitHubIndex(query string, maxResults int) ([]SearchResult, error) {
+	githubResults, err := o.githubIndex.Search(query, maxResults)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search GitHub index: %w", err)
+	}
+
+	// Convert index results to orchestrator results with source metadata
+	results := make([]SearchResult, len(githubResults))
+	for i, indexResult := range githubResults {
+		results[i] = SearchResult{
+			Title:       indexResult.Title,
+			URL:         indexResult.URL,
+			Snippet:     indexResult.Summary,
+			Score:       indexResult.Relevance,
+			Source:      "GitHub",
+			DocumentID:  indexResult.DocumentID,
+		}
+	}
+
+	return results, nil
+}
+
+// searchAllIndices performs searches on all indices and merges results
+func (o *Orchestrator) searchAllIndices(query string, maxResults int) ([]SearchResult, error) {
+	// Search all indices (without applying limit to individual searches)
 	natsResults, natsErr := o.natsIndex.Search(query, maxResults*2)
-	syncpResults, syncpErr := o.syncpIndex.Search(query, maxResults*2)
+	syncpResults, syncpErr := o.syadiaIndex.Search(query, maxResults*2)
+	githubResults, githubErr := o.githubIndex.Search(query, maxResults*2)
 
 	// Log errors but continue with available results
-	if natsErr != nil && syncpErr != nil {
-		return nil, fmt.Errorf("failed to search both indices: NATS: %v, Syncp: %v", natsErr, syncpErr)
+	if natsErr != nil && syncpErr != nil && githubErr != nil {
+		return nil, fmt.Errorf("failed to search all indices: NATS: %v, Synadia: %v, GitHub: %v", natsErr, syncpErr, githubErr)
 	}
 
 	// Merge results
-	allResults := make([]SearchResult, 0, len(natsResults)+len(syncpResults))
+	allResults := make([]SearchResult, 0, len(natsResults)+len(syncpResults)+len(githubResults))
 
 	// Add NATS results with source metadata
 	for _, indexResult := range natsResults {
@@ -164,14 +195,26 @@ func (o *Orchestrator) searchBothIndices(query string, maxResults int) ([]Search
 		})
 	}
 
-	// Add Syncp results with source metadata
+	// Add Synadia results with source metadata
 	for _, indexResult := range syncpResults {
 		allResults = append(allResults, SearchResult{
 			Title:       indexResult.Title,
 			URL:         indexResult.URL,
 			Snippet:     indexResult.Summary,
 			Score:       indexResult.Relevance,
-			Source:      "Syncp",
+			Source:      "Synadia",
+			DocumentID:  indexResult.DocumentID,
+		})
+	}
+
+	// Add GitHub results with source metadata
+	for _, indexResult := range githubResults {
+		allResults = append(allResults, SearchResult{
+			Title:       indexResult.Title,
+			URL:         indexResult.URL,
+			Snippet:     indexResult.Summary,
+			Score:       indexResult.Relevance,
+			Source:      "GitHub",
 			DocumentID:  indexResult.DocumentID,
 		})
 	}

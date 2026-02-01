@@ -31,57 +31,117 @@ retry_backoff: 1s
 # Default: 10
 max_search_results: 10
 
-# Syncp (Synadia Control Plane) Documentation Support
-# This section enables support for dual documentation sources: NATS and Syncp
+# Caching Configuration
+# Directory where documentation cache is stored
+# Default: ~/.cache/nats-mcp/
+# Set to empty string to disable caching
+cache_dir: ~/.cache/nats-mcp/
+
+# Maximum cache age in days before automatic refresh
+# Default: 7
+cache_max_age: 7
+
+# Synadia Documentation Support
+# This section enables support for dual documentation sources: NATS and Synadia
 # When enabled, queries are automatically routed to the appropriate documentation source
 # or both sources based on keyword classification
 #
 # Backward Compatibility:
-# - Setting syncp.enabled to false (default) maintains NATS-only behavior
-# - Existing configurations work unchanged without adding syncp configuration
-# - Syncp documentation fetching is optional; if it fails, server continues with NATS only
+# - Setting synadia.enabled to false (default) maintains NATS-only behavior
+# - Existing configurations work unchanged without adding synadia configuration
+# - Synadia documentation fetching is optional; if it fails, server continues with NATS only
 
-syncp:
-  # Enable Syncp documentation support
-  # Set to true to include Syncp documentation alongside NATS documentation
+synadia:
+  # Enable Synadia documentation support
+  # Set to true to include Synadia documentation alongside NATS documentation
   # Set to false to use NATS documentation only (default)
   # Default: false
   enabled: false
 
-  # Base URL for Syncp documentation
-  # Required when syncp.enabled is true, ignored when disabled
-  # Default: https://docs.synadia.com/control-plane
-  base_url: https://docs.synadia.com/control-plane
+  # Base URL for Synadia documentation
+  # Required when synadia.enabled is true, ignored when disabled
+  # Default: https://docs.synadia.com
+  base_url: https://docs.synadia.com
 
-  # Timeout for fetching Syncp documentation pages
+  # Timeout for fetching Synadia documentation pages
   # Format: duration string (e.g., "30s", "1m", "500ms")
   # This is separate from NATS fetch_timeout for independent control
   # Default: 30s
   fetch_timeout: 30s
 
+# GitHub Documentation Support
+# This section enables support for indexing markdown files from NATS GitHub repositories
+# When enabled, documentation from GitHub repos is indexed alongside NATS and Syncp docs
+#
+# Authentication:
+# - Requires a GitHub Personal Access Token (PAT) for authentication
+# - Token can be provided via config or NATS_DOCS_GITHUB_TOKEN environment variable
+# - Rate limits: 5000 requests/hour with token (60 requests/hour without)
+#
+# Repositories:
+# - Supports multiple repositories (default: nats-io/nats-server, nats-io/nats.docs, nats-io/nats)
+# - Format: "owner/repo"
+# - All markdown files are indexed
+
+github:
+  # Enable GitHub documentation support
+  # Set to true to include GitHub repository documentation
+  # Set to false to disable (default)
+  # Default: false
+  enabled: false
+
+  # GitHub Personal Access Token for authentication
+  # Required when github.enabled is true
+  # Can also be set via NATS_DOCS_GITHUB_TOKEN environment variable
+  # Token only needs public_repo scope
+  # Default: "" (empty)
+  token: ""
+
+  # GitHub repositories to index
+  # Format: list of "owner/repo" strings
+  # All markdown files in these repositories will be indexed
+  # Default:
+  #   - nats-io/nats-server
+  #   - nats-io/nats.docs
+  #   - nats-io/nats
+  repositories:
+    - nats-io/nats-server
+    - nats-io/nats.docs
+    - nats-io/nats
+
+  # Default branch to fetch from
+  # Default: main
+  default_branch: main
+
+  # Timeout for fetching GitHub documentation
+  # Format: integer (seconds)
+  # This is separate from NATS fetch_timeout for independent control
+  # Default: 30
+  fetch_timeout: 30
+
 # Query Classification Configuration
 # This section defines keywords that determine which documentation source(s) to search
 # Based on keywords found in the query, the system routes to:
 # - NATS documentation if only NATS keywords found
-# - Syncp documentation if only Syncp keywords found
+# - Synadia documentation if only Synadia keywords found
 # - Both sources if both keywords found or keywords are ambiguous
 #
 # Example queries:
 # - "jetstream basics" → NATS only (contains NATS keyword "jetstream")
-# - "control plane setup" → Syncp only (contains Syncp keyword "control-plane")
+# - "control plane setup" → Synadia only (contains Synadia keyword "control-plane")
 # - "authentication nats" → Both sources (contains both keywords)
 # - "streaming setup" → Both sources (ambiguous, keywords match both)
 
 classification:
-  # Keywords specific to Syncp documentation
-  # When any of these keywords appear in a query, Syncp documentation is considered
-  syncp_keywords:
-    - syncp
+  # Keywords specific to Synadia documentation
+  # When any of these keywords appear in a query, Synadia documentation is considered
+  synadia_keywords:
     - control-plane
     - synadia
     - namespace
     - managed
     - system
+    - platform
 
   # Keywords specific to NATS documentation
   # When any of these keywords appear in a query, NATS documentation is considered
@@ -96,6 +156,24 @@ classification:
     - rpc
     - kvstore
     - objectstore
+
+  # Keywords specific to GitHub documentation
+  # When any of these keywords appear in a query, GitHub documentation is considered
+  github_keywords:
+    - server
+    - implementation
+    - code
+    - go
+    - golang
+    - client
+    - example
+    - tutorial
+    - source
+    - repository
+    - readme
+    - github
+    - sdk
+    - library
 
 # Caching Strategy
 # This server uses session-based in-memory caching:

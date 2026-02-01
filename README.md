@@ -88,6 +88,36 @@ export NATS_DOCS_DOCS_URL=https://docs.nats.io
 export NATS_DOCS_FETCH_TIMEOUT=30s
 ```
 
+## Caching
+
+The server caches fetched documentation to enable offline operation and faster startup.
+
+### Cache Behavior
+- **First run**: Fetches docs from network, creates cache (~5-30 seconds)
+- **Subsequent runs**: Loads from cache if valid, extremely fast (<1 second)
+- **Auto-refresh**: Automatically refreshes if cache is older than 7 days (configurable)
+
+### Cache Location
+Default: `~/.cache/nats-mcp/`
+
+Override via environment variable:
+```bash
+export NATS_DOCS_CACHE_DIR=/custom/cache/path
+export NATS_DOCS_CACHE_MAX_AGE_DAYS=30  # Default: 7 days
+```
+
+### Manual Refresh
+
+Refresh documentation cache on startup:
+```bash
+./nats-docs-mcp-server --refresh-cache
+```
+
+Or use the `refresh_docs_cache` MCP tool from an LLM client to refresh during runtime.
+
+### Offline Mode
+The server works completely offline if a valid cache exists. No network connection is required after the initial cache creation.
+
 ## Syncp (Synadia Control Plane) Documentation Support
 
 The server supports optional dual documentation sources: NATS and Synadia Control Plane. This feature is disabled by default for backward compatibility.
